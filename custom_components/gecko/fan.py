@@ -15,6 +15,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import GeckoVesselCoordinator
 from .entity import GeckoEntityAvailabilityMixin
+from .telemetry import (
+    FLOW_SPEED_MODE_OPTIONS,
+    derive_flow_percentage,
+    derive_flow_speed_mode,
+)
 
 from gecko_iot_client.models.zone_types import ZoneType, FlowZoneType
 from gecko_iot_client.models.flow_zone import FlowZone, FlowZoneCapabilities
@@ -78,12 +83,10 @@ class GeckoFan(GeckoEntityAvailabilityMixin, CoordinatorEntity, FanEntity):
         self._attr_supported_features = (
             FanEntityFeature.TURN_OFF | FanEntityFeature.TURN_ON 
         )
-        
-        if FlowZoneCapabilities.SUPPORTS_SPEED_PRESETS in self._zone.capabilities:
+
+        if self._zone.speed is not None or FlowZoneCapabilities.SUPPORTS_SPEED_PRESETS in self._zone.capabilities:
             self._attr_supported_features |= FanEntityFeature.SET_SPEED
-            
-            self._speed_list = [preset.name for preset in self._zone.presets]
-        
+            self._speed_list = list(FLOW_SPEED_MODE_OPTIONS[1:])
             self._attr_speed_list = self._speed_list
         
         # Set icon based on zone type
@@ -113,18 +116,10 @@ class GeckoFan(GeckoEntityAvailabilityMixin, CoordinatorEntity, FanEntity):
     def _update_from_zone(self) -> None:
         """Update state attributes from zone data."""
         self._attr_is_on = self._zone.active
-        self._attr_percentage = int(self._zone.speed) if self._zone.speed is not None else 0
-        
-        if isinstance(self._zone.speed, (int, float)):
-            if self._zone.speed < 34:
-                self._attr_speed = "low"
-            elif self._zone.speed < 67:
-                self._attr_speed = "medium"
-            elif self._zone.speed <= 100:
-                self._attr_speed = "high"
-        
+        self._attr_percentage = derive_flow_percentage(self._zone)
+        self._attr_speed = derive_flow_speed_mode(self._zone)
+
         if not self._zone.active:
-            self._attr_speed = "off"
             self._attr_is_on = False
     
     @callback
@@ -163,6 +158,7 @@ class GeckoFan(GeckoEntityAvailabilityMixin, CoordinatorEntity, FanEntity):
             "low": 1,
             "medium": 2,
             "high": 3,
+            "max": 4,
         }
         speed_value = speed_map.get(speed, 0)
         try:

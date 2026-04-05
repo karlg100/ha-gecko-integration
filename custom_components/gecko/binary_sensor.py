@@ -16,9 +16,14 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from gecko_iot_client.models.flow_zone import FlowZone
+from gecko_iot_client.models.zone_types import ZoneType
+
 from .const import DOMAIN
 from .coordinator import GeckoVesselCoordinator
 from .connection_manager import GECKO_CONNECTION_MANAGER_KEY
+from .entity import GeckoEntityAvailabilityMixin
+from .telemetry import is_manual_flow_demand
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,6 +83,12 @@ async def async_setup_entry(
             )
             entities.append(entity)
             _LOGGER.debug("Created binary sensor entity %s for %s", description.key, coordinator.vessel_name)
+        entities.append(
+            GeckoSpaInUseBinarySensor(
+                coordinator=coordinator,
+                config_entry=config_entry,
+            )
+        )
     
     if entities:
         _LOGGER.debug("Adding %d binary sensor entities", len(entities))
@@ -180,3 +191,70 @@ class GeckoBinarySensorEntity(CoordinatorEntity[GeckoVesselCoordinator], BinaryS
         except Exception as e:
             _LOGGER.warning("Error updating connectivity binary sensor %s: %s", self._attr_name, e)
             self._attr_is_on = False
+
+
+class GeckoSpaInUseBinarySensor(
+    GeckoEntityAvailabilityMixin,
+    CoordinatorEntity[GeckoVesselCoordinator],
+    BinarySensorEntity,
+):
+    """Binary sensor for derived spa-in-use state."""
+
+    def __init__(
+        self,
+        coordinator: GeckoVesselCoordinator,
+        config_entry: ConfigEntry,
+    ) -> None:
+        """Initialize the spa-in-use binary sensor."""
+        super().__init__(coordinator)
+        vessel_id_name = coordinator.vessel_name.lower().replace(" ", "_").replace("-", "_")
+        self._attr_name = f"{coordinator.vessel_name} Spa In Use"
+        self._attr_unique_id = (
+            f"{config_entry.entry_id}_{coordinator.vessel_id}_spa_in_use"
+        )
+        self.entity_id = f"binary_sensor.{vessel_id_name}_spa_in_use"
+        self._attr_icon = "mdi:hot-tub"
+        self._attr_device_info = dr.DeviceInfo(
+            identifiers={(DOMAIN, str(coordinator.vessel_id))},
+        )
+        self._attr_available = False
+        self._active_light_zone_ids: list[str] = []
+        self._manual_flow_zone_ids: list[str] = []
+        self._active_flow_zone_ids: list[str] = []
+        self._update_state()
+
+    def _update_state(self) -> None:
+        """Update the derived spa-in-use state."""
+        light_zones = self.coordinator.get_zones_by_type(ZoneType.LIGHTING_ZONE)
+        flow_zones = self.coordinator.get_zones_by_type(ZoneType.FLOW_ZONE)
+
+        self._active_light_zone_ids = [
+            str(zone.id) for zone in light_zones if getattr(zone, "active", False)
+        ]
+        self._active_flow_zone_ids = [
+            str(zone.id) for zone in flow_zones if getattr(zone, "active", False)
+        ]
+        self._manual_flow_zone_ids = [
+            str(zone.id)
+            for zone in flow_zones
+            if isinstance(zone, FlowZone) and is_manual_flow_demand(zone)
+        ]
+
+        self._attr_is_on = bool(
+            self._active_light_zone_ids or self._manual_flow_zone_ids
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the zones that caused the spa to be marked in use."""
+        return {
+            "active_light_zone_ids": self._active_light_zone_ids,
+            "manual_flow_zone_ids": self._manual_flow_zone_ids,
+            "active_flow_zone_ids": self._active_flow_zone_ids,
+        }
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._update_state()
+        self.async_write_ha_state()
