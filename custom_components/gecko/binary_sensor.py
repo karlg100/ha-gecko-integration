@@ -17,6 +17,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from gecko_iot_client.models.flow_zone import FlowZone
+from gecko_iot_client.models.temperature_control_zone import TemperatureControlZone
 from gecko_iot_client.models.zone_types import ZoneType
 
 from .const import DOMAIN
@@ -71,7 +72,32 @@ async def async_setup_entry(
     if not coordinators:
         _LOGGER.warning("No vessel coordinators found")
         return
-    
+
+    added_eco_zone_ids: dict[str, set[str]] = {}
+
+    @callback
+    def discover_new_binary_sensor_entities(
+        coordinator: GeckoVesselCoordinator,
+    ) -> None:
+        """Discover binary sensors that depend on temperature zones."""
+        vessel_key = f"{coordinator.entry_id}_{coordinator.vessel_id}"
+        added_eco_zone_ids.setdefault(vessel_key, set())
+
+        new_entities: list[BinarySensorEntity] = []
+        for zone in coordinator.get_zones_by_type(ZoneType.TEMPERATURE_CONTROL_ZONE):
+            zone_id = str(zone.id)
+            if zone_id in added_eco_zone_ids[vessel_key]:
+                continue
+
+            if not isinstance(zone, TemperatureControlZone):
+                continue
+
+            new_entities.append(GeckoEcoModeBinarySensor(coordinator, zone))
+            added_eco_zone_ids[vessel_key].add(zone_id)
+
+        if new_entities:
+            async_add_entities(new_entities)
+
     # Create binary sensor entities for each vessel
     entities = []
     for coordinator in coordinators:
@@ -88,6 +114,10 @@ async def async_setup_entry(
                 coordinator=coordinator,
                 config_entry=config_entry,
             )
+        )
+        discover_new_binary_sensor_entities(coordinator)
+        coordinator.register_zone_update_callback(
+            lambda coord=coordinator: discover_new_binary_sensor_entities(coord)
         )
     
     if entities:
@@ -259,6 +289,57 @@ class GeckoSpaInUseBinarySensor(
             "manual_flow_zone_ids": self._manual_flow_zone_ids,
             "active_flow_zone_ids": self._active_flow_zone_ids,
             "flow_initiators_by_zone_id": self._flow_initiators_by_zone_id,
+        }
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._update_state()
+        self.async_write_ha_state()
+
+
+class GeckoEcoModeBinarySensor(
+    GeckoEntityAvailabilityMixin,
+    CoordinatorEntity[GeckoVesselCoordinator],
+    BinarySensorEntity,
+):
+    """Binary sensor for Gecko temperature eco mode."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: GeckoVesselCoordinator,
+        zone: TemperatureControlZone,
+    ) -> None:
+        """Initialize the eco mode binary sensor."""
+        super().__init__(coordinator)
+        self._zone = zone
+        vessel_id_name = coordinator.vessel_name.lower().replace(" ", "_").replace("-", "_")
+        self._attr_name = f"{zone.name} Eco Mode"
+        self._attr_unique_id = (
+            f"{coordinator.entry_id}_{coordinator.vessel_id}_eco_mode_{zone.id}"
+        )
+        self.entity_id = f"binary_sensor.{vessel_id_name}_eco_mode_{zone.id}"
+        self._attr_icon = "mdi:leaf"
+        self._attr_device_info = dr.DeviceInfo(
+            identifiers={(DOMAIN, str(coordinator.vessel_id))},
+        )
+        self._attr_available = False
+        self._update_state()
+
+    def _update_state(self) -> None:
+        """Update the eco mode state from the temperature zone."""
+        mode = getattr(self._zone, "mode", None)
+        self._attr_is_on = bool(mode and mode.eco)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return related temperature details."""
+        return {
+            "status": self._zone.status.name if self._zone.status else None,
+            "current_temperature": self._zone.temperature,
+            "target_temperature": self._zone.target_temperature,
         }
 
     @callback
