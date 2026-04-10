@@ -113,8 +113,12 @@ class GeckoFan(GeckoEntityAvailabilityMixin, CoordinatorEntity, FanEntity):
         """Register update callback when entity is added to hass."""
         await super().async_added_to_hass()
         self.coordinator.async_add_listener(self._handle_coordinator_update)
-        
-  
+
+    @property
+    def speed_count(self) -> int:
+        """Return the number of supported manual speeds."""
+        return max(1, len(get_supported_flow_speed_modes(self._zone)))
+
     def _update_from_zone(self) -> None:
         """Update state attributes from zone data."""
         if self._attr_supported_features & FanEntityFeature.SET_SPEED:
@@ -136,6 +140,15 @@ class GeckoFan(GeckoEntityAvailabilityMixin, CoordinatorEntity, FanEntity):
     async def async_turn_on(self, percentage: int | None = None, preset_mode: str | None = None, **kwargs) -> None:
         """Turn the fan on. Optionally set speed by percentage."""
         _LOGGER.debug("Turning on pump %s", self._attr_name)
+        speed = get_flow_speed_mode_for_percentage(self._zone, percentage)
+        await self.async_set_speed(speed)
+
+    async def async_set_percentage(self, percentage: int) -> None:
+        """Set the fan speed percentage."""
+        if percentage <= 0:
+            await self.async_turn_off()
+            return
+
         speed = get_flow_speed_mode_for_percentage(self._zone, percentage)
         await self.async_set_speed(speed)
         
