@@ -117,6 +117,9 @@ class GeckoFan(GeckoEntityAvailabilityMixin, CoordinatorEntity, FanEntity):
   
     def _update_from_zone(self) -> None:
         """Update state attributes from zone data."""
+        if self._attr_supported_features & FanEntityFeature.SET_SPEED:
+            self._speed_list = list(get_supported_flow_speed_modes(self._zone))
+            self._attr_speed_list = self._speed_list
         self._attr_is_on = self._zone.active
         self._attr_percentage = derive_flow_percentage(self._zone)
         self._attr_speed = derive_flow_speed_mode(self._zone)

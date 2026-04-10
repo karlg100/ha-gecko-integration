@@ -10,6 +10,32 @@ from gecko_iot_client.models.flow_zone import FlowZoneInitiator
 from gecko_iot_client.models.zone_types import ZoneType
 
 FLOW_SPEED_MODE_OPTIONS: tuple[str, ...] = ("off", "low", "medium", "high", "max")
+AUTOMATIC_FLOW_INITIATORS: frozenset[str] = frozenset(
+    {
+        FlowZoneInitiator.CHECKFLOW.name,
+        FlowZoneInitiator.CHECKFLOW.value,
+        FlowZoneInitiator.FILTRATION.name,
+        FlowZoneInitiator.FILTRATION.value,
+        FlowZoneInitiator.HEATING.name,
+        FlowZoneInitiator.HEATING.value,
+        FlowZoneInitiator.HEAT_PUMP.name,
+        FlowZoneInitiator.HEAT_PUMP.value,
+        FlowZoneInitiator.PURGE.name,
+        FlowZoneInitiator.PURGE.value,
+        FlowZoneInitiator.COOLDOWN.name,
+        FlowZoneInitiator.COOLDOWN.value,
+    }
+)
+AUTOMATIC_TEMPERATURE_STATUS_NAMES: frozenset[str] = frozenset(
+    {
+        "HEATING",
+        "COOLING",
+        "HEAT_PUMP_HEATING",
+        "HEAT_PUMP_AND_HEATER_HEATING",
+        "HEAT_PUMP_COOLING",
+        "HEAT_PUMP_DEFROSTING",
+    }
+)
 
 
 def normalize_initiators(initiators: Any) -> set[str]:
@@ -69,6 +95,15 @@ def get_flow_speed_step_values(zone: Any) -> tuple[float, ...]:
     return tuple(values)
 
 
+def _uses_binary_near_max_speed_encoding(zone: Any) -> bool:
+    """Return True when Gecko reports low/high as 99/100 style values."""
+    if get_flow_speed_step_values(zone):
+        return False
+
+    speed = _as_float(getattr(zone, "speed", None))
+    return speed is not None and 98.5 <= speed <= 100.5
+
+
 def _get_mode_label_for_step_index(step_index: int, step_count: int) -> str:
     """Map a configured step index onto HA speed labels."""
     if step_count <= 1:
@@ -93,6 +128,9 @@ def get_supported_flow_speed_modes(zone: Any) -> tuple[str, ...]:
                 ordered_modes.append(mode)
         return tuple(ordered_modes)
 
+    if _uses_binary_near_max_speed_encoding(zone):
+        return ("low", "high")
+
     return FLOW_SPEED_MODE_OPTIONS[1:]
 
 
@@ -110,6 +148,12 @@ def get_flow_speed_value_for_mode(zone: Any, mode: str) -> float | int | None:
         ]
         if matching_values:
             return matching_values[len(matching_values) // 2]
+
+    if _uses_binary_near_max_speed_encoding(zone):
+        return {
+            "low": 99,
+            "high": 100,
+        }.get(mode)
 
     return {
         "low": 1,
@@ -161,12 +205,24 @@ def _get_zone_runtime_state(
     return {}
 
 
+def get_flow_runtime_state(
+    zone: Any,
+    spa_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the raw runtime state for a flow zone."""
+    return _get_zone_runtime_state(
+        spa_state,
+        ZoneType.FLOW_ZONE,
+        getattr(zone, "id", ""),
+    )
+
+
 def get_flow_initiators(
     zone: Any,
     spa_state: dict[str, Any] | None = None,
 ) -> set[str]:
     """Return normalized flow initiators from raw shadow data or zone state."""
-    zone_state = _get_zone_runtime_state(spa_state, ZoneType.FLOW_ZONE, getattr(zone, "id", ""))
+    zone_state = get_flow_runtime_state(zone, spa_state)
     raw_initiators = zone_state.get("initiators_")
     if raw_initiators is None:
         raw_initiators = zone_state.get("initiators")
@@ -177,22 +233,55 @@ def get_flow_initiators(
     return normalize_initiators(getattr(zone, "initiators_", None))
 
 
+def get_temperature_status_names(temperature_zones: list[Any]) -> set[str]:
+    """Return the normalized set of active temperature status names."""
+    statuses: set[str] = set()
+    for zone in temperature_zones:
+        status = getattr(zone, "status", None)
+        name = getattr(status, "name", None)
+        if name:
+            statuses.add(str(name))
+    return statuses
+
+
+def get_flow_manual_demand_reason(
+    zone: Any,
+    spa_state: dict[str, Any] | None = None,
+    temperature_zones: list[Any] | None = None,
+) -> str:
+    """Explain why a flow zone is or is not considered manual demand."""
+    if not getattr(zone, "active", False):
+        return "inactive"
+
+    initiators = get_flow_initiators(zone, spa_state)
+    if (
+        FlowZoneInitiator.USER_DEMAND.value in initiators
+        or FlowZoneInitiator.USER_DEMAND.name in initiators
+    ):
+        return "user_demand_initiator"
+
+    if initiators & AUTOMATIC_FLOW_INITIATORS:
+        return "automatic_initiator"
+
+    if temperature_zones:
+        status_names = get_temperature_status_names(temperature_zones)
+        if status_names & AUTOMATIC_TEMPERATURE_STATUS_NAMES:
+            return "automatic_temperature_status"
+
+    if initiators:
+        return "unknown_initiator_fallback"
+
+    return "no_initiator_fallback"
+
+
 def is_manual_flow_demand(
     zone: Any,
     spa_state: dict[str, Any] | None = None,
+    temperature_zones: list[Any] | None = None,
 ) -> bool:
     """Return True when the active flow zone was manually started by the user."""
-    if not getattr(zone, "active", False):
-        return False
-
-    initiators = get_flow_initiators(zone, spa_state)
-    return bool(
-        initiators
-        and (
-            FlowZoneInitiator.USER_DEMAND.value in initiators
-            or FlowZoneInitiator.USER_DEMAND.name in initiators
-        )
-    )
+    reason = get_flow_manual_demand_reason(zone, spa_state, temperature_zones)
+    return reason in {"user_demand_initiator", "unknown_initiator_fallback", "no_initiator_fallback"}
 
 
 def derive_flow_speed_mode(zone: Any) -> str | None:
@@ -214,6 +303,9 @@ def derive_flow_speed_mode(zone: Any) -> str | None:
             key=lambda index: abs(step_values[index] - speed),
         )
         return _get_mode_label_for_step_index(nearest_step_index, len(step_values))
+
+    if _uses_binary_near_max_speed_encoding(zone):
+        return "high" if speed >= 99.5 else "low"
 
     # Some spas report discrete preset indexes instead of percentages.
     if float(speed).is_integer() and 0 <= speed <= 4:
