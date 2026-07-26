@@ -87,13 +87,12 @@ class GeckoConnectionManager:
         def on_connectivity_update(connectivity_status):
             # Store connectivity status in connection for easy access
             connection.connectivity_status = connectivity_status
-            
-            # Update connection status based on connectivity
-            if hasattr(connectivity_status, 'vessel_status'):
-                # If vessel is running but transporter is not connected, we may need to refresh token
-                vessel_running = str(connectivity_status.vessel_status) == 'RUNNING'
-                if vessel_running and not connection.is_connected:
-                    _LOGGER.warning("Vessel running but connection not established for %s", monitor_id)
+
+            # Update connection.is_connected to reflect actual transport state
+            # This ensures the coordinator detects disconnections and can trigger reconnection
+            connection.is_connected = bool(
+                getattr(connectivity_status, "transport_connected", False)
+            )
 
         def on_state_update(state_data: dict[str, Any]):
             # Keep the latest raw shadow payload around for telemetry that the
@@ -230,8 +229,8 @@ class GeckoConnectionManager:
         try:
             # Get the token refresh callback from the existing connection
             refresh_callback = None
-            if hasattr(connection.gecko_client, 'transporter') and hasattr(connection.gecko_client.transporter, '_token_refresh_callback'):
-                refresh_callback = connection.gecko_client.transporter._token_refresh_callback
+            if connection.gecko_client and connection.gecko_client.transporter:
+                refresh_callback = getattr(connection.gecko_client.transporter, '_token_refresh_callback', None)
             
             if not refresh_callback or not callable(refresh_callback):
                 _LOGGER.error("No token refresh callback available for monitor %s - cannot reconnect", monitor_id)
@@ -265,8 +264,8 @@ class GeckoConnectionManager:
                 )
                 
                 gecko_client = GeckoIotClient(monitor_id, transporter, config_timeout=CONFIG_TIMEOUT)
-                
-                # Re-register handlers on the new client, including raw state callbacks.
+
+                # Set up handlers using the helper method (DRY principle)
                 self._setup_client_handlers(gecko_client, connection, monitor_id)
                 
                 # Update connection object with new client and URL
@@ -395,7 +394,7 @@ class GeckoConnectionManager:
                 "websocket_url": connection.websocket_url,
             }
             
-            if hasattr(connection.gecko_client, 'connectivity_status') and connection.gecko_client.connectivity_status:
+            if connection.gecko_client and connection.gecko_client.connectivity_status:
                 status_info["connectivity_status"] = str(connection.gecko_client.connectivity_status)
             
             return status_info

@@ -6,7 +6,6 @@ import logging
 from typing import Any
 
 from homeassistant.components.light import ColorMode, LightEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import device_registry as dr
@@ -16,6 +15,7 @@ from homeassistant.core import callback
 from .const import DOMAIN
 from .coordinator import GeckoVesselCoordinator
 from .entity import GeckoEntityAvailabilityMixin
+from . import GeckoConfigEntry
 
 from gecko_iot_client.models.zone_types import ZoneType
 
@@ -25,7 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: GeckoConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Gecko light entities from a config entry."""
@@ -74,23 +74,23 @@ async def async_setup_entry(
 
 class GeckoLight(GeckoEntityAvailabilityMixin, CoordinatorEntity, LightEntity):
     """Representation of a Gecko light."""
+
+    _attr_has_entity_name = True
     coordinator: GeckoVesselCoordinator
 
     def __init__(
         self,
         coordinator: GeckoVesselCoordinator,
-        config_entry: ConfigEntry,
+        config_entry: GeckoConfigEntry,
         zone: Any,  # LightingZone from coordinator
     ) -> None:
         """Initialize the light."""
         super().__init__(coordinator)
-        
+
         self._zone = zone
-        self.entity_id = f"light.{coordinator.vessel_name}_light_{zone.id}".lower()
-        
-        self._attr_name = f"{coordinator.vessel_name} light zone {zone.id}"
-        self._attr_unique_id = f"{config_entry.entry_id}_{coordinator.vessel_name}_light_{zone.id}"
-        
+        self._attr_name = f"Light {zone.id}"
+        self._attr_unique_id = f"{config_entry.entry_id}_{coordinator.vessel_id}_light_{zone.id}"
+
         # Device info for grouping entities - reference the actual device created in __init__.py
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, str(coordinator.vessel_id))},

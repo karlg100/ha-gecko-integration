@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
     BinarySensorDeviceClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import device_registry as dr
@@ -23,6 +21,7 @@ from gecko_iot_client.models.zone_types import ZoneType
 from .const import DOMAIN
 from .coordinator import GeckoVesselCoordinator
 from .connection_manager import GECKO_CONNECTION_MANAGER_KEY
+from . import GeckoConfigEntry
 from .entity import GeckoEntityAvailabilityMixin
 from .telemetry import (
     get_flow_initiators,
@@ -63,15 +62,10 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[BinarySensorEntityDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: GeckoConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Gecko binary sensor entities from a config entry."""
-    
-    # Get the vessel coordinators from runtime_data
-    if not hasattr(config_entry, 'runtime_data') or not config_entry.runtime_data:
-        _LOGGER.error("No runtime_data found for config entry")
-        return
     
     coordinators = config_entry.runtime_data.coordinators
     if not coordinators:
@@ -154,26 +148,26 @@ async def async_setup_entry(
 class GeckoBinarySensorEntity(CoordinatorEntity[GeckoVesselCoordinator], BinarySensorEntity):
     """Representation of a Gecko binary sensor."""
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: GeckoVesselCoordinator,
-        config_entry: ConfigEntry,
+        config_entry: GeckoConfigEntry,
         description: BinarySensorEntityDescription,
     ) -> None:
         """Initialize the binary sensor."""
         super().__init__(coordinator)
-        
+
         self.entity_description = description
+        self._attr_is_on = False
         self._monitor_id = coordinator.monitor_id
         self._vessel_name = coordinator.vessel_name
         self._vessel_id = coordinator.vessel_id
-        
-        # Set up entity attributes
-        vessel_id_name = coordinator.vessel_name.lower().replace(" ", "_").replace("-", "_")
-        self._attr_name = f"{coordinator.vessel_name} {description.name}"
+
+        # Set up entity attributes — has_entity_name=True means HA prepends device name
         self._attr_unique_id = f"{config_entry.entry_id}_{coordinator.vessel_id}_{description.key}"
-        self.entity_id = f"binary_sensor.{vessel_id_name}_{description.key}"
-        
+
         # Device info for grouping entities
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, str(coordinator.vessel_id))},
@@ -185,7 +179,7 @@ class GeckoBinarySensorEntity(CoordinatorEntity[GeckoVesselCoordinator], BinaryS
         
         # Update state immediately when added to hass
         self._update_state()
-        _LOGGER.debug("Binary sensor %s added to hass with initial state: %s", self._attr_name, self._attr_is_on)
+        _LOGGER.debug("Binary sensor %s added to hass with initial state: %s", self.entity_description.key, self._attr_is_on)
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -218,7 +212,7 @@ class GeckoBinarySensorEntity(CoordinatorEntity[GeckoVesselCoordinator], BinaryS
             self._update_connectivity_from_status(connectivity_status)
                 
         except Exception as e:
-            _LOGGER.debug("Error updating connectivity binary sensor state for %s: %s", self._attr_name, e)
+            _LOGGER.debug("Error updating connectivity binary sensor state for %s: %s", self.entity_description.key, e)
             self._attr_is_on = False
 
     def _update_connectivity_from_status(self, connectivity_status) -> None:
@@ -243,7 +237,7 @@ class GeckoBinarySensorEntity(CoordinatorEntity[GeckoVesselCoordinator], BinaryS
                 self._attr_is_on = bool(connectivity_status.is_fully_connected)
                 
         except Exception as e:
-            _LOGGER.warning("Error updating connectivity binary sensor %s: %s", self._attr_name, e)
+            _LOGGER.warning("Error updating connectivity binary sensor %s: %s", self.entity_description.key, e)
             self._attr_is_on = False
 
 

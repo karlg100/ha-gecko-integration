@@ -6,7 +6,6 @@ import logging
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -16,6 +15,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import GeckoVesselCoordinator
 from .entity import GeckoEntityAvailabilityMixin
+from . import GeckoConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ WATERCARE_MODE_OPTIONS = [
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: GeckoConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Gecko select entities."""
@@ -68,6 +68,8 @@ async def async_setup_entry(
 class GeckoWatercareSelectEntity(GeckoEntityAvailabilityMixin, CoordinatorEntity, SelectEntity):
     """Representation of a Gecko watercare mode select."""
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: GeckoVesselCoordinator,
@@ -77,25 +79,25 @@ class GeckoWatercareSelectEntity(GeckoEntityAvailabilityMixin, CoordinatorEntity
         """Initialize the select."""
         SelectEntity.__init__(self)
         CoordinatorEntity.__init__(self, coordinator)
-        
+
         self._vessel_name = vessel_name
         self._vessel_id = vessel_id
-        
-        # Set up entity attributes
-        self._attr_name = f"{vessel_name} Watercare Mode"
+
+        # Set up entity attributes — has_entity_name=True means HA prepends device name
+        self._attr_name = "Watercare Mode"
         self._attr_unique_id = f"{vessel_id}_watercare_mode"
         self._attr_icon = "mdi:hot-tub"
         self._attr_entity_category = EntityCategory.CONFIG
         self._attr_options = WATERCARE_MODE_OPTIONS
-        
+
         # Device info for grouping entities
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, str(vessel_id))},
         )
-        
+
         # Initialize state
         self._attr_current_option = None
-        
+
         # Initialize availability (will be updated by mixin when added to hass)
         self._attr_available = False
 
