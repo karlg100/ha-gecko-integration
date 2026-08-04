@@ -135,6 +135,12 @@ async def async_setup_entry(
                 config_entry=config_entry,
             )
         )
+        entities.append(
+            GeckoFlowCheckBinarySensor(
+                coordinator=coordinator,
+                config_entry=config_entry,
+            )
+        )
         discover_new_binary_sensor_entities(coordinator)
         coordinator.register_zone_update_callback(
             lambda coord=coordinator: discover_new_binary_sensor_entities(coord)
@@ -502,27 +508,31 @@ class GeckoVesselHeatingBinarySensor(
         self.async_write_ha_state()
 
 
-class GeckoFiltrationBinarySensor(
+class GeckoAutomaticFlowBinarySensor(
     GeckoEntityAvailabilityMixin,
     CoordinatorEntity[GeckoVesselCoordinator],
     BinarySensorEntity,
 ):
-    """Binary sensor for vessel-level automatic filtration state."""
+    """Base sensor for vessel-level automatic flow initiators."""
+
+    _activity_key: str
+    _activity_name: str
+    _activity_icon: str
 
     def __init__(
         self,
         coordinator: GeckoVesselCoordinator,
         config_entry: ConfigEntry,
     ) -> None:
-        """Initialize the filtration binary sensor."""
+        """Initialize an automatic flow binary sensor."""
         super().__init__(coordinator)
         vessel_id_name = coordinator.vessel_name.lower().replace(" ", "_").replace("-", "_")
-        self._attr_name = f"{coordinator.vessel_name} Filtration"
+        self._attr_name = f"{coordinator.vessel_name} {self._activity_name}"
         self._attr_unique_id = (
-            f"{config_entry.entry_id}_{coordinator.vessel_id}_filtration"
+            f"{config_entry.entry_id}_{coordinator.vessel_id}_{self._activity_key}"
         )
-        self.entity_id = f"binary_sensor.{vessel_id_name}_filtration"
-        self._attr_icon = "mdi:filter"
+        self.entity_id = f"binary_sensor.{vessel_id_name}_{self._activity_key}"
+        self._attr_icon = self._activity_icon
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, str(coordinator.vessel_id))},
         )
@@ -534,7 +544,7 @@ class GeckoFiltrationBinarySensor(
         self._update_state()
 
     def _update_state(self) -> None:
-        """Update filtration state from flow-zone initiators."""
+        """Update automatic flow state from flow-zone initiators."""
         spa_state = self.coordinator.get_spa_state()
         flow_zones = [
             zone
@@ -559,7 +569,12 @@ class GeckoFiltrationBinarySensor(
             str(zone.id): sorted(get_flow_initiators(zone, spa_state))
             for zone in flow_zones
         }
-        self._attr_is_on = bool(self._filtration_zone_ids)
+        active_zone_ids = (
+            self._filtration_zone_ids
+            if self._activity_key == "filtration"
+            else self._checkflow_zone_ids
+        )
+        self._attr_is_on = bool(active_zone_ids)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -576,3 +591,19 @@ class GeckoFiltrationBinarySensor(
         """Handle updated data from the coordinator."""
         self._update_state()
         self.async_write_ha_state()
+
+
+class GeckoFiltrationBinarySensor(GeckoAutomaticFlowBinarySensor):
+    """Binary sensor for vessel-level automatic filtration state."""
+
+    _activity_key = "filtration"
+    _activity_name = "Filtration"
+    _activity_icon = "mdi:filter"
+
+
+class GeckoFlowCheckBinarySensor(GeckoAutomaticFlowBinarySensor):
+    """Binary sensor for vessel-level automatic check-flow state."""
+
+    _activity_key = "flow_check"
+    _activity_name = "Flow Check"
+    _activity_icon = "mdi:water-sync"
