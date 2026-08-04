@@ -17,7 +17,11 @@ from gecko_iot_client.models.events import EventChannel
 from gecko_iot_client import GeckoIotClient
 from gecko_iot_client.transporters.mqtt import MqttTransporter
 
-from .const import DOMAIN, CONFIG_TIMEOUT
+from .connectivity import (
+    is_fully_connected as connectivity_is_fully_connected,
+    preserve_known_connectivity_value,
+)
+from .const import CONFIG_TIMEOUT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,8 +47,19 @@ class GeckoMonitorConnection:
     state_callbacks: list[Callable[[dict[str, Any]], None]] = field(default_factory=list)
     is_connected: bool = False
     connectivity_status: Any = None  # ConnectivityStatus from geckoIotClient
+    gateway_status: Any = "UNKNOWN"
+    vessel_status: Any = "UNKNOWN"
     spa_state: dict[str, Any] | None = None
     refresh_token_callback: Callable[[str | None], str] | None = None  # Store callback for reconnection
+
+    @property
+    def is_fully_connected(self) -> bool:
+        """Return whether transport, gateway, and vessel are connected."""
+        return connectivity_is_fully_connected(
+            self.is_connected,
+            self.gateway_status,
+            self.vessel_status,
+        )
     
 
 class GeckoConnectionManager:
@@ -85,6 +100,25 @@ class GeckoConnectionManager:
         
         # Set up connectivity update handler
         def on_connectivity_update(connectivity_status):
+            # A shadow delta often omits connectivity_, which gecko-iot-client
+            # currently represents by resetting gateway and vessel to UNKNOWN.
+            # Preserve the last explicit values so unrelated state pushes do not
+            # make every Home Assistant entity briefly unavailable.
+            connection.gateway_status = preserve_known_connectivity_value(
+                connection.gateway_status,
+                getattr(connectivity_status, "gateway_status", None),
+            )
+            connection.vessel_status = preserve_known_connectivity_value(
+                connection.vessel_status,
+                getattr(connectivity_status, "vessel_status", None),
+            )
+
+            # The client owns this status object and uses it for is_connected.
+            # Normalize it in place so later client and entity callbacks see the
+            # same retained snapshot.
+            connectivity_status.gateway_status = connection.gateway_status
+            connectivity_status.vessel_status = connection.vessel_status
+
             # Store connectivity status in connection for easy access
             connection.connectivity_status = connectivity_status
 
