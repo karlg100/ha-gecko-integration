@@ -35,6 +35,9 @@
       "rf_channel": {
         "name": "RF Channel"
       },
+      "pack_configuration": {
+        "name": "Pack Configuration"
+      },
       "home_firmware_version": {
         "name": "Home (EN) Firmware Version"
       },

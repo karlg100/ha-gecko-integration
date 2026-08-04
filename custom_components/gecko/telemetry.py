@@ -43,6 +43,7 @@ HEATING_TEMPERATURE_STATUS_NAMES: frozenset[str] = frozenset(
 DEVICE_TELEMETRY_KEYS: tuple[str, ...] = (
     "rf_signal_strength",
     "rf_channel",
+    "pack_configuration",
     "home_firmware_version",
     "home_serial_number",
     "spa_firmware_version",
@@ -269,6 +270,7 @@ def _extract_device_telemetry(
     telemetry = {
         "rf_signal_strength": rf_signal_strength,
         "rf_channel": rf_channel,
+        "pack_configuration": (None, None),
         "home_firmware_version": (
             _find_named_field(home_mapping, firmware_aliases, home_path)
             if home_mapping
@@ -340,19 +342,33 @@ def _extract_device_telemetry(
     # MQTT payload is distinguished by its configuration metadata and accessory
     # map, and carries a separate hardware-style identifier.
     configuration_metadata = reported.get("metadata")
-    if (
-        telemetry["spa_serial_number"][0] is None
-        and isinstance(configuration_metadata, dict)
+    is_mqtt_configuration = (
+        isinstance(configuration_metadata, dict)
         and configuration_metadata.get("configurationId")
         and isinstance(reported.get("accessories"), dict)
-    ):
-        mqtt_vessel_id = reported.get("vesselId")
-        if (
-            not isinstance(mqtt_vessel_id, (dict, list))
-            and mqtt_vessel_id is not None
-        ):
-            vessel_id_path = ".".join((*reported_path, "vesselId"))
-            telemetry["spa_serial_number"] = (mqtt_vessel_id, vessel_id_path)
+    )
+    if is_mqtt_configuration:
+        configuration_id = configuration_metadata.get("configurationId")
+        if not isinstance(configuration_id, (dict, list)):
+            configuration_path = ".".join(
+                (*reported_path, "metadata", "configurationId")
+            )
+            telemetry["pack_configuration"] = (
+                configuration_id,
+                configuration_path,
+            )
+
+        if telemetry["spa_serial_number"][0] is None:
+            mqtt_vessel_id = reported.get("vesselId")
+            if (
+                not isinstance(mqtt_vessel_id, (dict, list))
+                and mqtt_vessel_id is not None
+            ):
+                vessel_id_path = ".".join((*reported_path, "vesselId"))
+                telemetry["spa_serial_number"] = (
+                    mqtt_vessel_id,
+                    vessel_id_path,
+                )
 
     return telemetry
 
@@ -612,6 +628,22 @@ def get_flow_runtime_state(
         ZoneType.FLOW_ZONE,
         getattr(zone, "id", ""),
     )
+
+
+def get_temperature_flow_status(
+    zone: Any,
+    spa_state: dict[str, Any] | None = None,
+) -> Any:
+    """Return the raw flow status reported for a temperature-control zone."""
+    zone_state = _get_zone_runtime_state(
+        spa_state,
+        ZoneType.TEMPERATURE_CONTROL_ZONE,
+        getattr(zone, "id", ""),
+    )
+    for key in ("flo_", "flo", "flowStatus", "flow_status"):
+        if key in zone_state:
+            return zone_state[key]
+    return None
 
 
 def get_flow_initiators(

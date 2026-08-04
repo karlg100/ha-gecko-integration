@@ -36,6 +36,7 @@ from .telemetry import (
     get_flow_runtime_state,
     get_flow_speed_step_values,
     get_supported_flow_speed_modes,
+    get_temperature_flow_status,
     is_manual_flow_demand,
 )
 
@@ -57,6 +58,12 @@ DEVICE_TELEMETRY_SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         name="RF Channel",
         translation_key="rf_channel",
         icon="mdi:radio-tower",
+    ),
+    SensorEntityDescription(
+        key="pack_configuration",
+        name="Pack Configuration",
+        translation_key="pack_configuration",
+        icon="mdi:package-variant-closed",
     ),
     SensorEntityDescription(
         key="home_firmware_version",
@@ -119,7 +126,12 @@ async def async_setup_entry(
             if not isinstance(zone, TemperatureControlZone):
                 continue
 
-            new_entities.append(GeckoTemperatureStatusSensor(coordinator, zone))
+            new_entities.extend(
+                (
+                    GeckoTemperatureStatusSensor(coordinator, zone),
+                    GeckoTemperatureFlowStatusSensor(coordinator, zone),
+                )
+            )
             added_temperature_zone_ids[vessel_key].add(zone_id)
 
         for zone in coordinator.get_zones_by_type(ZoneType.FLOW_ZONE):
@@ -302,6 +314,61 @@ class GeckoTemperatureStatusSensor(
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self._update_from_zone()
+        self.async_write_ha_state()
+
+
+class GeckoTemperatureFlowStatusSensor(
+    GeckoEntityAvailabilityMixin,
+    CoordinatorEntity[GeckoVesselCoordinator],
+    SensorEntity,
+):
+    """Expose the raw Gecko flow status for a temperature-control zone."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:waves-arrow-right"
+
+    def __init__(
+        self,
+        coordinator: GeckoVesselCoordinator,
+        zone: TemperatureControlZone,
+    ) -> None:
+        """Initialize a temperature-zone flow status sensor."""
+        super().__init__(coordinator)
+        self._zone = zone
+        self._attr_unique_id = (
+            f"{coordinator.entry_id}_{coordinator.vessel_id}_flow_status_{zone.id}"
+        )
+        self._attr_name = f"{zone.name} Flow Status"
+        self._attr_suggested_object_id = slugify(
+            f"{coordinator.vessel_name}_{zone.name}_flow_status"
+        )
+        self._attr_device_info = dr.DeviceInfo(
+            identifiers={(DOMAIN, str(coordinator.vessel_id))},
+        )
+        self._attr_available = False
+        self._update_from_coordinator()
+
+    def _update_from_coordinator(self) -> None:
+        """Update the raw flow status from the latest shadow."""
+        self._attr_native_value = get_temperature_flow_status(
+            self._zone,
+            self.coordinator.get_spa_state(),
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """Return the raw shadow field used for this zone."""
+        return {
+            "source_field": (
+                "MQTT shadow: state.reported.zones.temperatureControl."
+                f"{self._zone.id}.flo_"
+            )
+        }
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated flow status data."""
+        self._update_from_coordinator()
         self.async_write_ha_state()
 
 

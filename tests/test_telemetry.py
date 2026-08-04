@@ -97,6 +97,7 @@ class TestDeviceTelemetry(unittest.TestCase):
             {
                 "rf_signal_strength": -61,
                 "rf_channel": 18,
+                "pack_configuration": None,
                 "home_firmware_version": "1.4.12",
                 "home_serial_number": "EN-1234",
                 "spa_firmware_version": "1.2.5",
@@ -208,6 +209,7 @@ class TestDeviceTelemetry(unittest.TestCase):
             {
                 "rf_signal_strength": "state.reported.radio.signal",
                 "rf_channel": "state.reported.radio.channel",
+                "pack_configuration": None,
                 "home_firmware_version": None,
                 "home_serial_number": None,
                 "spa_firmware_version": None,
@@ -257,8 +259,17 @@ class TestDeviceTelemetry(unittest.TestCase):
         rest_values = telemetry.get_device_telemetry(rest_vessel)
 
         self.assertEqual(mqtt_values["spa_serial_number"], "252792551")
+        self.assertEqual(
+            mqtt_values["pack_configuration"],
+            "V_0431_003-LL_001-A_000_V01",
+        )
         self.assertEqual(mqtt_sources["spa_serial_number"], "vesselId")
+        self.assertEqual(
+            mqtt_sources["pack_configuration"],
+            "metadata.configurationId",
+        )
         self.assertIsNone(rest_values["spa_serial_number"])
+        self.assertIsNone(rest_values["pack_configuration"])
 
     def test_observed_rf_fields_do_not_make_shadow_version_firmware(self):
         shadow = {
@@ -323,6 +334,26 @@ class TestDeviceTelemetry(unittest.TestCase):
             telemetry.RAW_API_REDACTED,
         )
         self.assertEqual(source["nested"]["accessToken"], "secret-token")
+
+    def test_extracts_temperature_zone_flow_status(self):
+        zone = SimpleNamespace(id=1)
+        shadow = {
+            "state": {
+                "reported": {
+                    "zones": {
+                        "temperatureControl": {
+                            "1": {"flo_": "OK"},
+                        }
+                    }
+                }
+            }
+        }
+
+        self.assertEqual(
+            telemetry.get_temperature_flow_status(zone, shadow),
+            "OK",
+        )
+        self.assertIsNone(telemetry.get_temperature_flow_status(zone, {}))
 
 
 class FlowSpeedTests(unittest.TestCase):
