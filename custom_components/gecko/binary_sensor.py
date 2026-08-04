@@ -27,6 +27,8 @@ from .telemetry import (
     get_flow_initiators,
     get_flow_manual_demand_reason,
     get_flow_runtime_state,
+    is_checkflow_active,
+    is_filtration_flow_active,
     is_manual_flow_demand,
 )
 
@@ -128,7 +130,7 @@ async def async_setup_entry(
             )
         )
         entities.append(
-            GeckoCleaningModeBinarySensor(
+            GeckoFiltrationBinarySensor(
                 coordinator=coordinator,
                 config_entry=config_entry,
             )
@@ -500,116 +502,77 @@ class GeckoVesselHeatingBinarySensor(
         self.async_write_ha_state()
 
 
-class GeckoCleaningModeBinarySensor(
+class GeckoFiltrationBinarySensor(
     GeckoEntityAvailabilityMixin,
     CoordinatorEntity[GeckoVesselCoordinator],
     BinarySensorEntity,
 ):
-    """Binary sensor for vessel-level cleaning mode state."""
+    """Binary sensor for vessel-level automatic filtration state."""
 
     def __init__(
         self,
         coordinator: GeckoVesselCoordinator,
         config_entry: ConfigEntry,
     ) -> None:
-        """Initialize the cleaning mode binary sensor."""
+        """Initialize the filtration binary sensor."""
         super().__init__(coordinator)
         vessel_id_name = coordinator.vessel_name.lower().replace(" ", "_").replace("-", "_")
-        self._attr_name = f"{coordinator.vessel_name} Cleaning Mode"
+        self._attr_name = f"{coordinator.vessel_name} Filtration"
         self._attr_unique_id = (
-            f"{config_entry.entry_id}_{coordinator.vessel_id}_cleaning_mode"
+            f"{config_entry.entry_id}_{coordinator.vessel_id}_filtration"
         )
-        self.entity_id = f"binary_sensor.{vessel_id_name}_cleaning_mode"
-        self._attr_icon = "mdi:spray-bottle"
+        self.entity_id = f"binary_sensor.{vessel_id_name}_filtration"
+        self._attr_icon = "mdi:filter"
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, str(coordinator.vessel_id))},
         )
         self._attr_available = False
-        self._mode_name: str | None = None
-        self._operation_mode_raw: str | None = None
+        self._filtration_zone_ids: list[str] = []
+        self._checkflow_zone_ids: list[str] = []
+        self._active_flow_zone_ids: list[str] = []
+        self._flow_initiators_by_zone_id: dict[str, list[str]] = {}
+        self._update_state()
 
-    def _is_cleaning_mode_from_status(self, status: Any) -> bool:
-        """Return True when operation mode status indicates cleaning mode."""
-        candidates = (
-            "is_cleaning",
-            "cleaning",
-            "cleaning_mode",
-            "is_cleaning_mode",
-            "in_cleaning_mode",
-        )
-        for attribute in candidates:
-            value = getattr(status, attribute, None)
-            if isinstance(value, bool):
-                return value
+    def _update_state(self) -> None:
+        """Update filtration state from flow-zone initiators."""
+        spa_state = self.coordinator.get_spa_state()
+        flow_zones = [
+            zone
+            for zone in self.coordinator.get_zones_by_type(ZoneType.FLOW_ZONE)
+            if isinstance(zone, FlowZone)
+        ]
 
-        mode_name = getattr(status, "mode_name", None)
-        if mode_name:
-            mode_name_text = str(mode_name).lower()
-            if "clean" in mode_name_text:
-                return True
-
-        operation_mode = getattr(status, "operation_mode", None)
-        if operation_mode is not None:
-            operation_mode_name = getattr(operation_mode, "name", None)
-            operation_mode_value = getattr(operation_mode, "value", None)
-            combined_text = f"{operation_mode_name} {operation_mode_value}".lower()
-            if "clean" in combined_text:
-                return True
-
-        return False
-
-    async def _async_update_state(self) -> None:
-        """Update vessel-level cleaning mode state from operation mode status."""
-        self._mode_name = None
-        self._operation_mode_raw = None
-        self._attr_is_on = False
-
-        try:
-            status = await self.coordinator.async_get_operation_mode_status()
-            if not status:
-                return
-
-            mode_name = getattr(status, "mode_name", None)
-            self._mode_name = str(mode_name) if mode_name is not None else None
-
-            operation_mode = getattr(status, "operation_mode", None)
-            if operation_mode is not None:
-                operation_mode_name = getattr(operation_mode, "name", None)
-                operation_mode_value = getattr(operation_mode, "value", None)
-                self._operation_mode_raw = (
-                    f"{operation_mode_name}:{operation_mode_value}"
-                    if operation_mode_name is not None or operation_mode_value is not None
-                    else str(operation_mode)
-                )
-
-            self._attr_is_on = self._is_cleaning_mode_from_status(status)
-        except Exception as ex:
-            _LOGGER.debug(
-                "Could not update cleaning mode state for %s: %s",
-                self._attr_name,
-                ex,
-            )
-
-    async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
-        await super().async_added_to_hass()
-        await self._async_update_state()
-        self.async_write_ha_state()
+        self._active_flow_zone_ids = [
+            str(zone.id) for zone in flow_zones if getattr(zone, "active", False)
+        ]
+        self._filtration_zone_ids = [
+            str(zone.id)
+            for zone in flow_zones
+            if is_filtration_flow_active(zone, spa_state)
+        ]
+        self._checkflow_zone_ids = [
+            str(zone.id)
+            for zone in flow_zones
+            if is_checkflow_active(zone, spa_state)
+        ]
+        self._flow_initiators_by_zone_id = {
+            str(zone.id): sorted(get_flow_initiators(zone, spa_state))
+            for zone in flow_zones
+        }
+        self._attr_is_on = bool(self._filtration_zone_ids)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return operation mode details used for cleaning mode detection."""
+        """Return filtration and check-flow details."""
         return {
-            "mode_name": self._mode_name,
-            "operation_mode": self._operation_mode_raw,
+            "filtration_zone_ids": self._filtration_zone_ids,
+            "checkflow_zone_ids": self._checkflow_zone_ids,
+            "active_flow_zone_ids": self._active_flow_zone_ids,
+            "flow_initiators_by_zone_id": self._flow_initiators_by_zone_id,
         }
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        self.hass.async_create_task(self._async_update_state_and_write())
-
-    async def _async_update_state_and_write(self) -> None:
-        """Update state and write entity state in one scheduled task."""
-        await self._async_update_state()
+        self._update_state()
         self.async_write_ha_state()

@@ -18,9 +18,15 @@ from . import GeckoConfigEntry
 from .telemetry import (
     derive_flow_percentage,
     derive_flow_speed_mode,
+    get_flow_initiators,
+    get_non_user_flow_initiators,
     get_flow_speed_mode_for_percentage,
     get_flow_speed_value_for_mode,
     get_supported_flow_speed_modes,
+    is_checkflow_active,
+    is_filtration_flow_active,
+    is_flow_safe_to_deactivate,
+    is_user_controlled_flow_active,
 )
 
 from gecko_iot_client.models.zone_types import ZoneType, FlowZoneType
@@ -127,12 +133,41 @@ class GeckoFan(GeckoEntityAvailabilityMixin, CoordinatorEntity, FanEntity):
         if self._attr_supported_features & FanEntityFeature.SET_SPEED:
             self._speed_list = list(get_supported_flow_speed_modes(self._zone))
             self._attr_speed_list = self._speed_list
-        self._attr_is_on = self._zone.active
-        self._attr_percentage = derive_flow_percentage(self._zone)
-        self._attr_speed = derive_flow_speed_mode(self._zone)
 
-        if not self._zone.active:
-            self._attr_is_on = False
+        # A flow zone is also used by filtration, heating, purge and the spa's
+        # periodic check-flow routine.  Those automatic demands must not make
+        # the user-controllable fan appear switched on, otherwise automations
+        # that turn a fan back off can terminate the automatic demand.
+        self._attr_is_on = is_user_controlled_flow_active(
+            self._zone,
+            self._coordinator.get_spa_state(),
+        )
+        self._attr_percentage = (
+            derive_flow_percentage(self._zone) if self._attr_is_on else 0
+        )
+        self._attr_speed = (
+            derive_flow_speed_mode(self._zone) if self._attr_is_on else "off"
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose physical and automatic flow state separately from fan state."""
+        spa_state = self._coordinator.get_spa_state()
+        initiators = get_flow_initiators(self._zone, spa_state)
+        return {
+            "physical_active": bool(self._zone.active),
+            "physical_percentage": derive_flow_percentage(self._zone),
+            "physical_speed": derive_flow_speed_mode(self._zone),
+            "initiators": sorted(initiators),
+            "automatic_initiators": sorted(
+                get_non_user_flow_initiators(self._zone, spa_state)
+            ),
+            "filtration_active": is_filtration_flow_active(
+                self._zone,
+                spa_state,
+            ),
+            "checkflow_active": is_checkflow_active(self._zone, spa_state),
+        }
     
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -157,7 +192,26 @@ class GeckoFan(GeckoEntityAvailabilityMixin, CoordinatorEntity, FanEntity):
         
     async def async_turn_off(self, **kwargs) -> None:
         """Turn the fan off."""
-        self._zone.deactivate()
+        spa_state = self._coordinator.get_spa_state()
+        if not is_flow_safe_to_deactivate(self._zone, spa_state):
+            _LOGGER.warning(
+                "Ignoring turn-off for %s because automatic flow initiators are active: %s",
+                self._attr_name,
+                sorted(get_non_user_flow_initiators(self._zone, spa_state)),
+            )
+            return
+
+        try:
+            self._zone.deactivate()
+        except RuntimeError as ex:
+            # gecko-iot-client applies the same safety rule using its modeled
+            # initiators.  Keep the HA service call from failing if that model
+            # has fresher state than our cached raw shadow document.
+            _LOGGER.warning(
+                "Could not turn off pump %s safely: %s",
+                self._attr_name,
+                ex,
+            )
         
     @property
     def is_on(self) -> bool | None:

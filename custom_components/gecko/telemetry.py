@@ -10,6 +10,12 @@ from gecko_iot_client.models.flow_zone import FlowZoneInitiator
 from gecko_iot_client.models.zone_types import ZoneType
 
 FLOW_SPEED_MODE_OPTIONS: tuple[str, ...] = ("off", "low", "medium", "high", "max")
+USER_FLOW_INITIATORS: frozenset[str] = frozenset(
+    {
+        FlowZoneInitiator.USER_DEMAND.name,
+        FlowZoneInitiator.USER_DEMAND.value,
+    }
+)
 AUTOMATIC_FLOW_INITIATORS: frozenset[str] = frozenset(
     {
         FlowZoneInitiator.CHECKFLOW.name,
@@ -233,6 +239,70 @@ def get_flow_initiators(
     return normalize_initiators(getattr(zone, "initiators_", None))
 
 
+def get_non_user_flow_initiators(
+    zone: Any,
+    spa_state: dict[str, Any] | None = None,
+) -> set[str]:
+    """Return initiators that must not be stopped through manual pump control."""
+    return get_flow_initiators(zone, spa_state) - USER_FLOW_INITIATORS
+
+
+def is_user_controlled_flow_active(
+    zone: Any,
+    spa_state: dict[str, Any] | None = None,
+) -> bool:
+    """Return True when an active zone represents user-controllable demand."""
+    if not getattr(zone, "active", False):
+        return False
+
+    initiators = get_flow_initiators(zone, spa_state)
+    return not initiators or bool(initiators & USER_FLOW_INITIATORS)
+
+
+def is_flow_safe_to_deactivate(
+    zone: Any,
+    spa_state: dict[str, Any] | None = None,
+) -> bool:
+    """Return whether stopping the zone cannot interrupt an automatic demand."""
+    return not get_non_user_flow_initiators(zone, spa_state)
+
+
+def is_filtration_flow_active(
+    zone: Any,
+    spa_state: dict[str, Any] | None = None,
+) -> bool:
+    """Return True when filtration is actively requesting this flow zone."""
+    if not getattr(zone, "active", False):
+        return False
+
+    initiators = get_flow_initiators(zone, spa_state)
+    return bool(
+        {
+            FlowZoneInitiator.FILTRATION.name,
+            FlowZoneInitiator.FILTRATION.value,
+        }
+        & initiators
+    )
+
+
+def is_checkflow_active(
+    zone: Any,
+    spa_state: dict[str, Any] | None = None,
+) -> bool:
+    """Return True during the spa's short automatic check-flow run."""
+    if not getattr(zone, "active", False):
+        return False
+
+    initiators = get_flow_initiators(zone, spa_state)
+    return bool(
+        {
+            FlowZoneInitiator.CHECKFLOW.name,
+            FlowZoneInitiator.CHECKFLOW.value,
+        }
+        & initiators
+    )
+
+
 def get_temperature_status_names(temperature_zones: list[Any]) -> set[str]:
     """Return the normalized set of active temperature status names."""
     statuses: set[str] = set()
@@ -254,10 +324,7 @@ def get_flow_manual_demand_reason(
         return "inactive"
 
     initiators = get_flow_initiators(zone, spa_state)
-    if (
-        FlowZoneInitiator.USER_DEMAND.value in initiators
-        or FlowZoneInitiator.USER_DEMAND.name in initiators
-    ):
+    if initiators & USER_FLOW_INITIATORS:
         return "user_demand_initiator"
 
     if initiators & AUTOMATIC_FLOW_INITIATORS:

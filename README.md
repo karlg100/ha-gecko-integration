@@ -159,7 +159,7 @@ The integration creates multiple entity types for comprehensive spa control:
 **Binary Sensors:**
 - `binary_sensor.spa_name_heating` - Vessel-level heating state (on when any temperature zone is heating)
 - `binary_sensor.spa_name_heating_1` - Temperature zone 1 heating state
-- `binary_sensor.spa_name_cleaning_mode` - Cleaning mode state (on when cleaning mode is active)
+- `binary_sensor.spa_name_filtration` - Automatic filtration state (on for `FI`; exposes short `CF` check-flow runs separately)
 
 ---
 
