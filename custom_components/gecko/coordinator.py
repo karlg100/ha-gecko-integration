@@ -16,6 +16,7 @@ from gecko_iot_client.models.zone_types import ZoneType, AbstractZone
 
 from .const import DOMAIN
 from .connection_manager import async_get_connection_manager, GeckoMonitorConnection
+from .telemetry import DEVICE_TELEMETRY_KEYS, retain_device_telemetry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +56,12 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         
         # Store real-time state data for this vessel
         self._spa_state: Dict[str, Any] = {}
+
+        # Device telemetry is commonly omitted from shadow delta updates. Keep
+        # the last explicitly reported value for each field.
+        self._device_telemetry: Dict[str, Any] = {
+            key: None for key in DEVICE_TELEMETRY_KEYS
+        }
         
         # Track if this vessel has received initial zone data
         self._has_initial_zones = False
@@ -299,6 +306,9 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             def on_state_update(state_data):
                 self.update_spa_state(state_data)
+
+            def on_configuration_update(configuration):
+                self.update_device_telemetry(configuration)
             
             # Create refresh token callback
             refresh_token_callback = self._create_refresh_token_callback(websocket_url)
@@ -310,6 +320,7 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 vessel_name=self.vessel_name,
                 update_callback=on_zone_update,
                 state_callback=on_state_update,
+                configuration_callback=on_configuration_update,
                 refresh_token_callback=refresh_token_callback,
             )
             
@@ -329,11 +340,19 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def update_spa_state(self, state_data: Dict[str, Any]) -> None:
         """Update spa state data and trigger coordinator update."""
         self._spa_state = state_data
-        
+        self.update_device_telemetry(state_data)
+
         # Schedule the async call to run on the event loop from background thread
         asyncio.run_coroutine_threadsafe(
             self._async_handle_zone_update({"last_update": state_data}),
             self.hass.loop
+        )
+
+    def update_device_telemetry(self, source_data: Dict[str, Any]) -> None:
+        """Retain device telemetry found in state or configuration data."""
+        self._device_telemetry = retain_device_telemetry(
+            self._device_telemetry,
+            source_data,
         )
 
     async def async_wait_for_initial_zone_data(self, timeout: float = INITIAL_ZONE_TIMEOUT) -> bool:
@@ -350,6 +369,10 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Get spa state data for this vessel."""
         return self._spa_state
 
+    def get_device_telemetry(self) -> Dict[str, Any]:
+        """Return the latest known RF and EN/CO device telemetry."""
+        return self._device_telemetry.copy()
+
     async def async_shutdown(self) -> None:
         """Shutdown coordinator and cleanup resources."""
         _LOGGER.debug("Shutting down coordinator for vessel %s (entry %s)", self.vessel_name, self.entry_id)
@@ -364,4 +387,5 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         
         self._zones.clear()
         self._spa_state.clear()
+        self._device_telemetry.clear()
         self._zone_update_callbacks.clear()

@@ -45,6 +45,9 @@ class GeckoMonitorConnection:
     vessel_name: str
     update_callbacks: list[Callable[[dict], None]] = field(default_factory=list)
     state_callbacks: list[Callable[[dict[str, Any]], None]] = field(default_factory=list)
+    configuration_callbacks: list[Callable[[dict[str, Any]], None]] = field(
+        default_factory=list
+    )
     is_connected: bool = False
     connectivity_status: Any = None  # ConnectivityStatus from geckoIotClient
     gateway_status: Any = "UNKNOWN"
@@ -140,8 +143,21 @@ class GeckoConnectionManager:
                 except Exception as e:
                     _LOGGER.error("Error in state update callback for monitor %s: %s", monitor_id, e)
 
+        def on_configuration_update(configuration: dict[str, Any]):
+            callbacks = list(connection.configuration_callbacks)
+            for callback in callbacks:
+                try:
+                    callback(configuration)
+                except Exception as e:
+                    _LOGGER.error(
+                        "Error in configuration callback for monitor %s: %s",
+                        monitor_id,
+                        e,
+                    )
+
         gecko_client.on_zone_update(on_zone_update)
         gecko_client.on(EventChannel.CONNECTIVITY_UPDATE, on_connectivity_update)
+        gecko_client.transporter.on_configuration_loaded(on_configuration_update)
         gecko_client.transporter.on_state_loaded(on_state_update)
         gecko_client.transporter.on_state_change(on_state_update)
     
@@ -152,6 +168,7 @@ class GeckoConnectionManager:
         vessel_name: str,
         update_callback: Callable[[dict], None] | None = None,
         state_callback: Callable[[dict[str, Any]], None] | None = None,
+        configuration_callback: Callable[[dict[str, Any]], None] | None = None,
         refresh_token_callback: Callable[[str | None], str] | None = None,
     ) -> GeckoMonitorConnection:
         """Get existing connection or create a new one for a monitor."""
@@ -165,6 +182,11 @@ class GeckoConnectionManager:
                     connection.update_callbacks.append(update_callback)
                 if state_callback and state_callback not in connection.state_callbacks:
                     connection.state_callbacks.append(state_callback)
+                if (
+                    configuration_callback
+                    and configuration_callback not in connection.configuration_callbacks
+                ):
+                    connection.configuration_callbacks.append(configuration_callback)
                 
                 return connection
             
@@ -194,6 +216,8 @@ class GeckoConnectionManager:
                     connection.update_callbacks.append(update_callback)
                 if state_callback:
                     connection.state_callbacks.append(state_callback)
+                if configuration_callback:
+                    connection.configuration_callbacks.append(configuration_callback)
                 
                 # Set up handlers using the helper method
                 self._setup_client_handlers(gecko_client, connection, monitor_id)

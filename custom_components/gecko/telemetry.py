@@ -40,6 +40,225 @@ HEATING_TEMPERATURE_STATUS_NAMES: frozenset[str] = frozenset(
     }
 )
 
+DEVICE_TELEMETRY_KEYS: tuple[str, ...] = (
+    "rf_signal_strength",
+    "rf_channel",
+    "home_firmware_version",
+    "home_serial_number",
+    "spa_firmware_version",
+    "spa_serial_number",
+)
+
+
+def _normalized_key(value: Any) -> str:
+    """Normalize a shadow key so naming-style changes do not break telemetry."""
+    return "".join(character for character in str(value).lower() if character.isalnum())
+
+
+def _walk_mappings(value: Any):
+    """Yield all mappings below a raw shadow value."""
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _walk_mappings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_mappings(child)
+
+
+def _find_named_value(value: Any, aliases: set[str]) -> Any:
+    """Return the first non-container value matching a normalized key alias."""
+    for mapping in _walk_mappings(value):
+        for key, candidate in mapping.items():
+            if _normalized_key(key) not in aliases:
+                continue
+            if not isinstance(candidate, (dict, list)):
+                return candidate
+            if isinstance(candidate, dict):
+                for wrapper_key in ("value", "currentValue", "current", "default"):
+                    if wrapper_key not in candidate:
+                        continue
+                    wrapped_value = candidate.get(wrapper_key)
+                    if not isinstance(wrapped_value, (dict, list)):
+                        return wrapped_value
+    return None
+
+
+def _find_module_mapping(value: Any, module_aliases: set[str]) -> dict[str, Any] | None:
+    """Find an EN/home or CO/spa module mapping in reported telemetry."""
+    discriminator_keys = {
+        "device",
+        "devicetype",
+        "module",
+        "moduletype",
+        "name",
+        "type",
+    }
+
+    for mapping in _walk_mappings(value):
+        for key, candidate in mapping.items():
+            if _normalized_key(key) in module_aliases and isinstance(candidate, dict):
+                return candidate
+
+        for key, candidate in mapping.items():
+            if (
+                _normalized_key(key) in discriminator_keys
+                and _normalized_key(candidate) in module_aliases
+            ):
+                return mapping
+
+    return None
+
+
+def _reported_shadow_state(spa_state: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the reported branch from either a full shadow or reported data."""
+    if not isinstance(spa_state, dict):
+        return {}
+
+    state = spa_state.get("state")
+    if isinstance(state, dict):
+        reported = state.get("reported")
+        if isinstance(reported, dict):
+            return reported
+        # AWS shadow deltas and document callbacks may provide the updated
+        # fields directly below ``state`` instead of a reported branch.
+        return state
+
+    reported = spa_state.get("reported")
+    if isinstance(reported, dict):
+        return reported
+
+    return spa_state
+
+
+def get_device_telemetry(
+    spa_state: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Extract RF and EN/CO device metadata from a Gecko shadow update.
+
+    These values are not modeled by gecko-iot-client 1.0.3. Gecko shadows have
+    used both camelCase and snake_case names, as well as keyed and list-based
+    EN/CO module layouts, so extraction deliberately normalizes those variants.
+    Missing values are returned as ``None`` so callers can retain values across
+    sparse shadow delta messages.
+    """
+    reported = _reported_shadow_state(spa_state)
+
+    rf_signal_strength = _find_named_value(
+        reported,
+        {
+            "rfsignal",
+            "rfsignalstrength",
+            "rfstrength",
+            "rssi",
+        },
+    )
+    rf_channel = _find_named_value(reported, {"rfchannel"})
+
+    # Some shadow versions put generic signal/channel keys inside an RF object.
+    rf_mapping = _find_module_mapping(reported, {"rf", "radio"})
+    telemetry_mapping = _find_module_mapping(
+        reported,
+        {"devicetelemetry", "telemetry"},
+    )
+    rf_source = rf_mapping or telemetry_mapping
+    if rf_source:
+        if rf_signal_strength is None:
+            rf_signal_strength = _find_named_value(
+                rf_source,
+                {"signal", "signalquality", "signalstrength", "strength"},
+            )
+        if rf_channel is None:
+            rf_channel = _find_named_value(rf_source, {"channel"})
+
+    home_mapping = _find_module_mapping(
+        reported,
+        {"en", "enmodule", "home", "homemodule", "hometransmitter"},
+    )
+    spa_mapping = _find_module_mapping(
+        reported,
+        {"co", "comodule", "spa", "spamodule", "spatransmitter"},
+    )
+
+    firmware_aliases = {
+        "firmware",
+        "firmwareversion",
+        "fw",
+        "fwversion",
+        "softwareversion",
+        "version",
+    }
+    serial_aliases = {
+        "serial",
+        "serialnumber",
+        "serialno",
+        "sn",
+    }
+
+    telemetry = {
+        "rf_signal_strength": rf_signal_strength,
+        "rf_channel": rf_channel,
+        "home_firmware_version": (
+            _find_named_value(home_mapping, firmware_aliases) if home_mapping else None
+        ),
+        "home_serial_number": (
+            _find_named_value(home_mapping, serial_aliases) if home_mapping else None
+        ),
+        "spa_firmware_version": (
+            _find_named_value(spa_mapping, firmware_aliases) if spa_mapping else None
+        ),
+        "spa_serial_number": (
+            _find_named_value(spa_mapping, serial_aliases) if spa_mapping else None
+        ),
+    }
+
+    # Also accept flattened fields such as enFirmwareVersion/coSerialNumber.
+    flattened_aliases = {
+        "home_firmware_version": {
+            "enfirmware",
+            "enfirmwareversion",
+            "enfwversion",
+            "homefirmware",
+            "homefirmwareversion",
+        },
+        "home_serial_number": {
+            "enserial",
+            "enserialnumber",
+            "homeserial",
+            "homeserialnumber",
+        },
+        "spa_firmware_version": {
+            "cofirmware",
+            "cofirmwareversion",
+            "cofwversion",
+            "spafirmware",
+            "spafirmwareversion",
+        },
+        "spa_serial_number": {
+            "coserial",
+            "coserialnumber",
+            "spaserial",
+            "spaserialnumber",
+        },
+    }
+    for telemetry_key, aliases in flattened_aliases.items():
+        if telemetry[telemetry_key] is None:
+            telemetry[telemetry_key] = _find_named_value(reported, aliases)
+
+    return telemetry
+
+
+def retain_device_telemetry(
+    current: dict[str, Any],
+    source_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Merge explicitly reported telemetry into the last known values."""
+    retained = {key: current.get(key) for key in DEVICE_TELEMETRY_KEYS}
+    for key, value in get_device_telemetry(source_data).items():
+        if value is not None:
+            retained[key] = value
+    return retained
+
 
 def normalize_initiators(initiators: Any) -> set[str]:
     """Normalize flow initiators into comparable string values."""

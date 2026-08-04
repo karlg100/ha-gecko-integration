@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
@@ -36,6 +40,39 @@ _LOGGER = logging.getLogger(__name__)
 
 TEMPERATURE_STATUS_OPTIONS: tuple[str, ...] = tuple(
     status.name for status in TemperatureControlZoneStatus
+)
+
+DEVICE_TELEMETRY_SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="rf_signal_strength",
+        translation_key="rf_signal_strength",
+        icon="mdi:signal",
+    ),
+    SensorEntityDescription(
+        key="rf_channel",
+        translation_key="rf_channel",
+        icon="mdi:radio-tower",
+    ),
+    SensorEntityDescription(
+        key="home_firmware_version",
+        translation_key="home_firmware_version",
+        icon="mdi:chip",
+    ),
+    SensorEntityDescription(
+        key="home_serial_number",
+        translation_key="home_serial_number",
+        icon="mdi:identifier",
+    ),
+    SensorEntityDescription(
+        key="spa_firmware_version",
+        translation_key="spa_firmware_version",
+        icon="mdi:chip",
+    ),
+    SensorEntityDescription(
+        key="spa_serial_number",
+        translation_key="spa_serial_number",
+        icon="mdi:identifier",
+    ),
 )
 
 
@@ -91,10 +128,53 @@ async def async_setup_entry(
             async_add_entities(new_entities)
 
     for coordinator in runtime_data.coordinators:
+        async_add_entities(
+            GeckoDeviceTelemetrySensor(coordinator, description)
+            for description in DEVICE_TELEMETRY_SENSOR_DESCRIPTIONS
+        )
         discover_new_sensor_entities(coordinator)
         coordinator.register_zone_update_callback(
             lambda coord=coordinator: discover_new_sensor_entities(coord)
         )
+
+
+class GeckoDeviceTelemetrySensor(
+    GeckoEntityAvailabilityMixin,
+    CoordinatorEntity[GeckoVesselCoordinator],
+    SensorEntity,
+):
+    """Expose RF and EN/CO metadata from the raw Gecko shadow."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: GeckoVesselCoordinator,
+        description: SensorEntityDescription,
+    ) -> None:
+        """Initialize a device telemetry sensor."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = (
+            f"{coordinator.entry_id}_{coordinator.vessel_id}_{description.key}"
+        )
+        self._attr_device_info = dr.DeviceInfo(
+            identifiers={(DOMAIN, str(coordinator.vessel_id))},
+        )
+        self._attr_available = False
+        self._update_from_coordinator()
+
+    def _update_from_coordinator(self) -> None:
+        """Update this sensor from retained device telemetry."""
+        self._attr_native_value = self.coordinator.get_device_telemetry().get(
+            self.entity_description.key
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated shadow data."""
+        self._update_from_coordinator()
+        self.async_write_ha_state()
 
 
 class GeckoTemperatureStatusSensor(

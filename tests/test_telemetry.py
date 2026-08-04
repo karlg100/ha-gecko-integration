@@ -69,6 +69,129 @@ def _load_telemetry_module():
 telemetry = _load_telemetry_module()
 
 
+class TestDeviceTelemetry(unittest.TestCase):
+    """Test RF and EN/CO telemetry extraction from raw Gecko shadows."""
+
+    def test_extracts_keyed_camel_case_telemetry(self):
+        state = {
+            "state": {
+                "reported": {
+                    "telemetry_": {
+                        "rfSignalStrength": -61,
+                        "rfChannel": 18,
+                        "EN": {
+                            "firmwareVersion": "1.4.12",
+                            "serialNumber": "EN-1234",
+                        },
+                        "CO": {
+                            "firmwareVersion": "1.2.5",
+                            "serialNumber": "CO-5678",
+                        },
+                    }
+                }
+            }
+        }
+
+        self.assertEqual(
+            telemetry.get_device_telemetry(state),
+            {
+                "rf_signal_strength": -61,
+                "rf_channel": 18,
+                "home_firmware_version": "1.4.12",
+                "home_serial_number": "EN-1234",
+                "spa_firmware_version": "1.2.5",
+                "spa_serial_number": "CO-5678",
+            },
+        )
+
+    def test_extracts_list_based_and_nested_rf_telemetry(self):
+        state = {
+            "reported": {
+                "deviceTelemetry": {
+                    "radio": {"signalStrength": 72, "channel": 4},
+                    "modules": [
+                        {
+                            "moduleType": "home",
+                            "software_version": "2.0.1",
+                            "serial_no": "HOME-1",
+                        },
+                        {
+                            "moduleType": "spa",
+                            "fw": "2.0.2",
+                            "sn": "SPA-2",
+                        },
+                    ],
+                }
+            }
+        }
+
+        extracted = telemetry.get_device_telemetry(state)
+
+        self.assertEqual(extracted["rf_signal_strength"], 72)
+        self.assertEqual(extracted["rf_channel"], 4)
+        self.assertEqual(extracted["home_firmware_version"], "2.0.1")
+        self.assertEqual(extracted["home_serial_number"], "HOME-1")
+        self.assertEqual(extracted["spa_firmware_version"], "2.0.2")
+        self.assertEqual(extracted["spa_serial_number"], "SPA-2")
+
+    def test_missing_sparse_delta_values_are_none(self):
+        self.assertEqual(
+            telemetry.get_device_telemetry(
+                {"state": {"reported": {"zones": {"flow": {}}}}}
+            ),
+            {key: None for key in telemetry.DEVICE_TELEMETRY_KEYS},
+        )
+
+    def test_sparse_delta_retains_last_known_values(self):
+        current = {
+            "rf_signal_strength": -61,
+            "rf_channel": 18,
+            "home_firmware_version": "1.4.12",
+            "home_serial_number": "EN-1234",
+            "spa_firmware_version": "1.2.5",
+            "spa_serial_number": "CO-5678",
+        }
+
+        retained = telemetry.retain_device_telemetry(
+            current,
+            {"state": {"rfSignalStrength": -58}},
+        )
+
+        self.assertEqual(retained["rf_signal_strength"], -58)
+        self.assertEqual(retained["rf_channel"], 18)
+        self.assertEqual(retained["home_firmware_version"], "1.4.12")
+        self.assertEqual(retained["home_serial_number"], "EN-1234")
+        self.assertEqual(retained["spa_firmware_version"], "1.2.5")
+        self.assertEqual(retained["spa_serial_number"], "CO-5678")
+
+    def test_extracts_wrapped_configuration_values(self):
+        configuration = {
+            "telemetry": {
+                "signalStrength": {"value": -55},
+                "channel": {"currentValue": 11},
+            },
+            "hardware": {
+                "en_": {
+                    "version": {"value": "3.1.0"},
+                    "serial": {"value": "EN-42"},
+                },
+                "co_": {
+                    "version": {"value": "3.2.0"},
+                    "serial": {"value": "CO-43"},
+                },
+            },
+        }
+
+        extracted = telemetry.get_device_telemetry(configuration)
+
+        self.assertEqual(extracted["rf_signal_strength"], -55)
+        self.assertEqual(extracted["rf_channel"], 11)
+        self.assertEqual(extracted["home_firmware_version"], "3.1.0")
+        self.assertEqual(extracted["home_serial_number"], "EN-42")
+        self.assertEqual(extracted["spa_firmware_version"], "3.2.0")
+        self.assertEqual(extracted["spa_serial_number"], "CO-43")
+
+
 class FlowSpeedTests(unittest.TestCase):
     """Verify two-speed readback values are not reused as commands."""
 
