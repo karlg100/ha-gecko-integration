@@ -15,7 +15,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from gecko_iot_client.models.zone_types import ZoneType, AbstractZone
 
 from .const import DOMAIN
-from .connection_manager import async_get_connection_manager, GeckoMonitorConnection
+from .connection_manager import async_get_connection_manager
 from .telemetry import (
     DEVICE_TELEMETRY_KEYS,
     get_device_metadata_candidate_paths,
