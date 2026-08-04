@@ -32,14 +32,11 @@ AUTOMATIC_FLOW_INITIATORS: frozenset[str] = frozenset(
         FlowZoneInitiator.COOLDOWN.value,
     }
 )
-AUTOMATIC_TEMPERATURE_STATUS_NAMES: frozenset[str] = frozenset(
+HEATING_TEMPERATURE_STATUS_NAMES: frozenset[str] = frozenset(
     {
         "HEATING",
-        "COOLING",
         "HEAT_PUMP_HEATING",
         "HEAT_PUMP_AND_HEATER_HEATING",
-        "HEAT_PUMP_COOLING",
-        "HEAT_PUMP_DEFROSTING",
     }
 )
 
@@ -332,7 +329,7 @@ def get_flow_manual_demand_reason(
 
     if temperature_zones:
         status_names = get_temperature_status_names(temperature_zones)
-        if status_names & AUTOMATIC_TEMPERATURE_STATUS_NAMES:
+        if status_names & HEATING_TEMPERATURE_STATUS_NAMES:
             return "automatic_temperature_status"
 
     if initiators:

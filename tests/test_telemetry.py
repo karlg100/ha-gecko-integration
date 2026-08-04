@@ -126,6 +126,70 @@ class FlowInitiatorTests(unittest.TestCase):
     def test_active_zone_without_initiator_data_preserves_legacy_fan_state(self) -> None:
         self.assertTrue(telemetry.is_user_controlled_flow_active(self.zone))
 
+    def test_non_heating_temperature_status_does_not_suppress_user_demand(
+        self,
+    ) -> None:
+        for status_name in (
+            "COOLING",
+            "HEAT_PUMP_COOLING",
+            "HEAT_PUMP_DEFROSTING",
+            "IDLE",
+        ):
+            with self.subTest(status_name=status_name):
+                temperature_zones = [
+                    SimpleNamespace(status=SimpleNamespace(name=status_name))
+                ]
+                self.assertEqual(
+                    telemetry.get_flow_manual_demand_reason(
+                        self.zone,
+                        temperature_zones=temperature_zones,
+                    ),
+                    "no_initiator_fallback",
+                )
+                self.assertTrue(
+                    telemetry.is_manual_flow_demand(
+                        self.zone,
+                        temperature_zones=temperature_zones,
+                    )
+                )
+
+    def test_heating_temperature_status_remains_automatic(self) -> None:
+        temperature_zones = [SimpleNamespace(status=SimpleNamespace(name="HEATING"))]
+
+        self.assertEqual(
+            telemetry.get_flow_manual_demand_reason(
+                self.zone,
+                temperature_zones=temperature_zones,
+            ),
+            "automatic_temperature_status",
+        )
+        self.assertFalse(
+            telemetry.is_manual_flow_demand(
+                self.zone,
+                temperature_zones=temperature_zones,
+            )
+        )
+
+    def test_user_demand_takes_precedence_over_heating(self) -> None:
+        state = self._spa_state(["UD"])
+        temperature_zones = [SimpleNamespace(status=SimpleNamespace(name="HEATING"))]
+
+        self.assertEqual(
+            telemetry.get_flow_manual_demand_reason(
+                self.zone,
+                state,
+                temperature_zones,
+            ),
+            "user_demand_initiator",
+        )
+        self.assertTrue(
+            telemetry.is_manual_flow_demand(
+                self.zone,
+                state,
+                temperature_zones,
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
