@@ -326,6 +326,43 @@ def get_device_telemetry_sources(
     }
 
 
+def get_device_metadata_candidate_paths(
+    source_data: dict[str, Any] | None,
+) -> tuple[str, ...]:
+    """Return raw field paths that may contain device metadata.
+
+    Paths, rather than values, are exposed for troubleshooting so identifiers
+    and other payload contents are not copied into diagnostics accidentally.
+    """
+    reported, reported_path = _reported_shadow_state(source_data)
+    candidates: set[str] = set()
+    exact_aliases = {"fw", "sn", "monitorid"}
+    partial_aliases = {"firmware", "revision", "serial", "software", "version"}
+
+    for mapping, mapping_path in _walk_mappings(reported, reported_path):
+        for key, value in mapping.items():
+            normalized_key = _normalized_key(key)
+            if normalized_key not in exact_aliases and not any(
+                alias in normalized_key for alias in partial_aliases
+            ):
+                continue
+
+            field_path = ".".join((*mapping_path, str(key)))
+            if not isinstance(value, (dict, list)):
+                candidates.add(field_path)
+                continue
+
+            if isinstance(value, dict):
+                for wrapper_key in ("value", "currentValue", "current", "default"):
+                    if wrapper_key not in value:
+                        continue
+                    wrapped_value = value.get(wrapper_key)
+                    if not isinstance(wrapped_value, (dict, list)):
+                        candidates.add(f"{field_path}.{wrapper_key}")
+
+    return tuple(sorted(candidates))
+
+
 def retain_device_telemetry(
     current: dict[str, Any],
     source_data: dict[str, Any] | None,

@@ -18,6 +18,7 @@ from .const import DOMAIN
 from .connection_manager import async_get_connection_manager, GeckoMonitorConnection
 from .telemetry import (
     DEVICE_TELEMETRY_KEYS,
+    get_device_metadata_candidate_paths,
     get_device_telemetry,
     get_device_telemetry_sources,
 )
@@ -69,6 +70,7 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._device_telemetry_sources: Dict[str, str | None] = {
             key: None for key in DEVICE_TELEMETRY_KEYS
         }
+        self._device_metadata_candidate_paths: set[str] = set()
         
         # Track if this vessel has received initial zone data
         self._has_initial_zones = False
@@ -366,6 +368,10 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Retain device telemetry found in state or configuration data."""
         extracted = get_device_telemetry(source_data)
         source_paths = get_device_telemetry_sources(source_data)
+        self._device_metadata_candidate_paths.update(
+            f"{source_name}: {path}"
+            for path in get_device_metadata_candidate_paths(source_data)
+        )
         for key, value in extracted.items():
             if value is not None and source_paths[key]:
                 self._device_telemetry[key] = value
@@ -395,6 +401,10 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the API payload and field path used for a telemetry value."""
         return self._device_telemetry_sources.get(key)
 
+    def get_device_metadata_candidate_paths(self) -> tuple[str, ...]:
+        """Return raw metadata-like API field paths seen for this vessel."""
+        return tuple(sorted(self._device_metadata_candidate_paths))
+
     async def async_shutdown(self) -> None:
         """Shutdown coordinator and cleanup resources."""
         _LOGGER.debug("Shutting down coordinator for vessel %s (entry %s)", self.vessel_name, self.entry_id)
@@ -411,4 +421,5 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._spa_state.clear()
         self._device_telemetry.clear()
         self._device_telemetry_sources.clear()
+        self._device_metadata_candidate_paths.clear()
         self._zone_update_callbacks.clear()

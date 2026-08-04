@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from gecko_iot_client.models.flow_zone import FlowZone
 from gecko_iot_client.models.temperature_control_zone import (
@@ -164,6 +165,9 @@ class GeckoDeviceTelemetrySensor(
         self._attr_unique_id = (
             f"{coordinator.entry_id}_{coordinator.vessel_id}_{description.key}"
         )
+        self._attr_suggested_object_id = slugify(
+            f"{coordinator.vessel_name}_{description.key}"
+        )
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, str(coordinator.vessel_id))},
         )
@@ -183,12 +187,19 @@ class GeckoDeviceTelemetrySensor(
         self.async_write_ha_state()
 
     @property
-    def extra_state_attributes(self) -> dict[str, str]:
+    def extra_state_attributes(self) -> dict[str, str | tuple[str, ...]]:
         """Show which raw API field supplied the telemetry value."""
+        attributes: dict[str, str | tuple[str, ...]] = {}
         source = self.coordinator.get_device_telemetry_source(
             self.entity_description.key
         )
-        return {"source_field": source} if source else {}
+        if source:
+            attributes["source_field"] = source
+        elif candidate_paths := (
+            self.coordinator.get_device_metadata_candidate_paths()
+        ):
+            attributes["candidate_fields"] = candidate_paths
+        return attributes
 
 
 class GeckoTemperatureStatusSensor(

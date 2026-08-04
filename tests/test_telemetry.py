@@ -236,6 +236,25 @@ class TestDeviceTelemetry(unittest.TestCase):
         self.assertEqual(extracted["spa_serial_number"], "CO-5678")
         self.assertEqual(sources["home_serial_number"], "monitorId")
 
+    def test_reports_metadata_candidate_paths_without_values(self):
+        source = {
+            "monitorId": "private-monitor-id",
+            "hardware": {
+                "softwareRevision": "1.2.3",
+                "serialNumber": "private-serial",
+                "unrelated": "not included",
+            },
+        }
+
+        self.assertEqual(
+            telemetry.get_device_metadata_candidate_paths(source),
+            (
+                "hardware.serialNumber",
+                "hardware.softwareRevision",
+                "monitorId",
+            ),
+        )
+
 
 class FlowSpeedTests(unittest.TestCase):
     """Verify two-speed readback values are not reused as commands."""
