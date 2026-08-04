@@ -191,6 +191,51 @@ class TestDeviceTelemetry(unittest.TestCase):
         self.assertEqual(extracted["spa_firmware_version"], "3.2.0")
         self.assertEqual(extracted["spa_serial_number"], "CO-43")
 
+    def test_reports_raw_source_paths(self):
+        state = {
+            "state": {
+                "reported": {
+                    "radio": {
+                        "signal": 3,
+                        "channel": 22,
+                    }
+                }
+            }
+        }
+
+        self.assertEqual(
+            telemetry.get_device_telemetry_sources(state),
+            {
+                "rf_signal_strength": "state.reported.radio.signal",
+                "rf_channel": "state.reported.radio.channel",
+                "home_firmware_version": None,
+                "home_serial_number": None,
+                "spa_firmware_version": None,
+                "spa_serial_number": None,
+            },
+        )
+
+    def test_extracts_rest_vessel_metadata(self):
+        vessel = {
+            "monitorId": "EN-1234",
+            "spa_configuration": {
+                "gateway": {"firmwareVersion": "4.5.6"},
+                "controller": {
+                    "firmwareVersion": "7.8.9",
+                    "serialNumber": "CO-5678",
+                },
+            },
+        }
+
+        extracted = telemetry.get_device_telemetry(vessel)
+        sources = telemetry.get_device_telemetry_sources(vessel)
+
+        self.assertEqual(extracted["home_firmware_version"], "4.5.6")
+        self.assertEqual(extracted["home_serial_number"], "EN-1234")
+        self.assertEqual(extracted["spa_firmware_version"], "7.8.9")
+        self.assertEqual(extracted["spa_serial_number"], "CO-5678")
+        self.assertEqual(sources["home_serial_number"], "monitorId")
+
 
 class FlowSpeedTests(unittest.TestCase):
     """Verify two-speed readback values are not reused as commands."""

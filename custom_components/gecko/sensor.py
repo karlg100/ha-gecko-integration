@@ -45,31 +45,37 @@ TEMPERATURE_STATUS_OPTIONS: tuple[str, ...] = tuple(
 DEVICE_TELEMETRY_SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="rf_signal_strength",
+        name="RF Signal Strength",
         translation_key="rf_signal_strength",
         icon="mdi:signal",
     ),
     SensorEntityDescription(
         key="rf_channel",
+        name="RF Channel",
         translation_key="rf_channel",
         icon="mdi:radio-tower",
     ),
     SensorEntityDescription(
         key="home_firmware_version",
+        name="Home (EN) Firmware Version",
         translation_key="home_firmware_version",
         icon="mdi:chip",
     ),
     SensorEntityDescription(
         key="home_serial_number",
+        name="Home (EN) Serial Number",
         translation_key="home_serial_number",
         icon="mdi:identifier",
     ),
     SensorEntityDescription(
         key="spa_firmware_version",
+        name="Spa (CO) Firmware Version",
         translation_key="spa_firmware_version",
         icon="mdi:chip",
     ),
     SensorEntityDescription(
         key="spa_serial_number",
+        name="Spa (CO) Serial Number",
         translation_key="spa_serial_number",
         icon="mdi:identifier",
     ),
@@ -175,6 +181,14 @@ class GeckoDeviceTelemetrySensor(
         """Handle updated shadow data."""
         self._update_from_coordinator()
         self.async_write_ha_state()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """Show which raw API field supplied the telemetry value."""
+        source = self.coordinator.get_device_telemetry_source(
+            self.entity_description.key
+        )
+        return {"source_field": source} if source else {}
 
 
 class GeckoTemperatureStatusSensor(

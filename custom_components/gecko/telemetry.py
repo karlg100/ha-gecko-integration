@@ -55,36 +55,45 @@ def _normalized_key(value: Any) -> str:
     return "".join(character for character in str(value).lower() if character.isalnum())
 
 
-def _walk_mappings(value: Any):
-    """Yield all mappings below a raw shadow value."""
+def _walk_mappings(value: Any, path: tuple[str, ...] = ()):
+    """Yield mappings and their paths below a raw API value."""
     if isinstance(value, dict):
-        yield value
-        for child in value.values():
-            yield from _walk_mappings(child)
+        yield value, path
+        for key, child in value.items():
+            yield from _walk_mappings(child, (*path, str(key)))
     elif isinstance(value, list):
-        for child in value:
-            yield from _walk_mappings(child)
+        for index, child in enumerate(value):
+            yield from _walk_mappings(child, (*path, str(index)))
 
 
-def _find_named_value(value: Any, aliases: set[str]) -> Any:
-    """Return the first non-container value matching a normalized key alias."""
-    for mapping in _walk_mappings(value):
+def _find_named_field(
+    value: Any,
+    aliases: set[str],
+    path_prefix: tuple[str, ...] = (),
+) -> tuple[Any, str | None]:
+    """Return the first scalar and field path matching a normalized key alias."""
+    for mapping, mapping_path in _walk_mappings(value, path_prefix):
         for key, candidate in mapping.items():
             if _normalized_key(key) not in aliases:
                 continue
+            field_path = ".".join((*mapping_path, str(key)))
             if not isinstance(candidate, (dict, list)):
-                return candidate
+                return candidate, field_path
             if isinstance(candidate, dict):
                 for wrapper_key in ("value", "currentValue", "current", "default"):
                     if wrapper_key not in candidate:
                         continue
                     wrapped_value = candidate.get(wrapper_key)
                     if not isinstance(wrapped_value, (dict, list)):
-                        return wrapped_value
-    return None
+                        return wrapped_value, f"{field_path}.{wrapper_key}"
+    return None, None
 
 
-def _find_module_mapping(value: Any, module_aliases: set[str]) -> dict[str, Any] | None:
+def _find_module_mapping(
+    value: Any,
+    module_aliases: set[str],
+    path_prefix: tuple[str, ...] = (),
+) -> tuple[dict[str, Any] | None, tuple[str, ...]]:
     """Find an EN/home or CO/spa module mapping in reported telemetry."""
     discriminator_keys = {
         "device",
@@ -95,56 +104,51 @@ def _find_module_mapping(value: Any, module_aliases: set[str]) -> dict[str, Any]
         "type",
     }
 
-    for mapping in _walk_mappings(value):
+    for mapping, mapping_path in _walk_mappings(value, path_prefix):
         for key, candidate in mapping.items():
             if _normalized_key(key) in module_aliases and isinstance(candidate, dict):
-                return candidate
+                return candidate, (*mapping_path, str(key))
 
         for key, candidate in mapping.items():
             if (
                 _normalized_key(key) in discriminator_keys
                 and _normalized_key(candidate) in module_aliases
             ):
-                return mapping
+                return mapping, mapping_path
 
-    return None
+    return None, ()
 
 
-def _reported_shadow_state(spa_state: dict[str, Any] | None) -> dict[str, Any]:
+def _reported_shadow_state(
+    spa_state: dict[str, Any] | None,
+) -> tuple[dict[str, Any], tuple[str, ...]]:
     """Return the reported branch from either a full shadow or reported data."""
     if not isinstance(spa_state, dict):
-        return {}
+        return {}, ()
 
     state = spa_state.get("state")
     if isinstance(state, dict):
         reported = state.get("reported")
         if isinstance(reported, dict):
-            return reported
+            return reported, ("state", "reported")
         # AWS shadow deltas and document callbacks may provide the updated
         # fields directly below ``state`` instead of a reported branch.
-        return state
+        return state, ("state",)
 
     reported = spa_state.get("reported")
     if isinstance(reported, dict):
-        return reported
+        return reported, ("reported",)
 
-    return spa_state
+    return spa_state, ()
 
 
-def get_device_telemetry(
-    spa_state: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Extract RF and EN/CO device metadata from a Gecko shadow update.
+def _extract_device_telemetry(
+    source_data: dict[str, Any] | None,
+) -> dict[str, tuple[Any, str | None]]:
+    """Extract telemetry values together with the raw field paths used."""
+    reported, reported_path = _reported_shadow_state(source_data)
 
-    These values are not modeled by gecko-iot-client 1.0.3. Gecko shadows have
-    used both camelCase and snake_case names, as well as keyed and list-based
-    EN/CO module layouts, so extraction deliberately normalizes those variants.
-    Missing values are returned as ``None`` so callers can retain values across
-    sparse shadow delta messages.
-    """
-    reported = _reported_shadow_state(spa_state)
-
-    rf_signal_strength = _find_named_value(
+    rf_signal_strength = _find_named_field(
         reported,
         {
             "rfsignal",
@@ -152,32 +156,60 @@ def get_device_telemetry(
             "rfstrength",
             "rssi",
         },
+        reported_path,
     )
-    rf_channel = _find_named_value(reported, {"rfchannel"})
+    rf_channel = _find_named_field(reported, {"rfchannel"}, reported_path)
 
     # Some shadow versions put generic signal/channel keys inside an RF object.
-    rf_mapping = _find_module_mapping(reported, {"rf", "radio"})
-    telemetry_mapping = _find_module_mapping(
+    rf_mapping, rf_path = _find_module_mapping(
+        reported, {"rf", "radio"}, reported_path
+    )
+    telemetry_mapping, telemetry_path = _find_module_mapping(
         reported,
         {"devicetelemetry", "telemetry"},
+        reported_path,
     )
     rf_source = rf_mapping or telemetry_mapping
+    rf_source_path = rf_path if rf_mapping else telemetry_path
     if rf_source:
-        if rf_signal_strength is None:
-            rf_signal_strength = _find_named_value(
+        if rf_signal_strength[0] is None:
+            rf_signal_strength = _find_named_field(
                 rf_source,
                 {"signal", "signalquality", "signalstrength", "strength"},
+                rf_source_path,
             )
-        if rf_channel is None:
-            rf_channel = _find_named_value(rf_source, {"channel"})
+        if rf_channel[0] is None:
+            rf_channel = _find_named_field(
+                rf_source,
+                {"channel"},
+                rf_source_path,
+            )
 
-    home_mapping = _find_module_mapping(
+    home_mapping, home_path = _find_module_mapping(
         reported,
-        {"en", "enmodule", "home", "homemodule", "hometransmitter"},
+        {
+            "en",
+            "enmodule",
+            "gateway",
+            "gatewaymodule",
+            "home",
+            "homemodule",
+            "hometransmitter",
+        },
+        reported_path,
     )
-    spa_mapping = _find_module_mapping(
+    spa_mapping, spa_path = _find_module_mapping(
         reported,
-        {"co", "comodule", "spa", "spamodule", "spatransmitter"},
+        {
+            "co",
+            "comodule",
+            "controller",
+            "spa",
+            "spamodule",
+            "spacontroller",
+            "spatransmitter",
+        },
+        reported_path,
     )
 
     firmware_aliases = {
@@ -199,16 +231,24 @@ def get_device_telemetry(
         "rf_signal_strength": rf_signal_strength,
         "rf_channel": rf_channel,
         "home_firmware_version": (
-            _find_named_value(home_mapping, firmware_aliases) if home_mapping else None
+            _find_named_field(home_mapping, firmware_aliases, home_path)
+            if home_mapping
+            else (None, None)
         ),
         "home_serial_number": (
-            _find_named_value(home_mapping, serial_aliases) if home_mapping else None
+            _find_named_field(home_mapping, serial_aliases, home_path)
+            if home_mapping
+            else (None, None)
         ),
         "spa_firmware_version": (
-            _find_named_value(spa_mapping, firmware_aliases) if spa_mapping else None
+            _find_named_field(spa_mapping, firmware_aliases, spa_path)
+            if spa_mapping
+            else (None, None)
         ),
         "spa_serial_number": (
-            _find_named_value(spa_mapping, serial_aliases) if spa_mapping else None
+            _find_named_field(spa_mapping, serial_aliases, spa_path)
+            if spa_mapping
+            else (None, None)
         ),
     }
 
@@ -218,34 +258,72 @@ def get_device_telemetry(
             "enfirmware",
             "enfirmwareversion",
             "enfwversion",
+            "gatewayfirmware",
+            "gatewayfirmwareversion",
             "homefirmware",
             "homefirmwareversion",
         },
         "home_serial_number": {
             "enserial",
             "enserialnumber",
+            "gatewayserial",
+            "gatewayserialnumber",
             "homeserial",
             "homeserialnumber",
+            "monitorid",
         },
         "spa_firmware_version": {
             "cofirmware",
             "cofirmwareversion",
             "cofwversion",
+            "controllerfirmware",
+            "controllerfirmwareversion",
             "spafirmware",
             "spafirmwareversion",
         },
         "spa_serial_number": {
             "coserial",
             "coserialnumber",
+            "controllerserial",
+            "controllerserialnumber",
             "spaserial",
             "spaserialnumber",
         },
     }
     for telemetry_key, aliases in flattened_aliases.items():
-        if telemetry[telemetry_key] is None:
-            telemetry[telemetry_key] = _find_named_value(reported, aliases)
+        if telemetry[telemetry_key][0] is None:
+            telemetry[telemetry_key] = _find_named_field(
+                reported, aliases, reported_path
+            )
 
     return telemetry
+
+
+def get_device_telemetry(
+    spa_state: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Extract RF and EN/CO device metadata from a Gecko shadow update.
+
+    These values are not modeled by gecko-iot-client 1.0.3. Gecko shadows have
+    used both camelCase and snake_case names, as well as keyed and list-based
+    EN/CO module layouts, so extraction deliberately normalizes those variants.
+    Missing values are returned as ``None`` so callers can retain values across
+    sparse shadow delta messages.
+    """
+    return {
+        key: value
+        for key, (value, _source_path) in _extract_device_telemetry(spa_state).items()
+    }
+
+
+def get_device_telemetry_sources(
+    source_data: dict[str, Any] | None,
+) -> dict[str, str | None]:
+    """Return the raw API field path used for each telemetry value."""
+    return {
+        key: source_path
+        for key, (_value, source_path) in _extract_device_telemetry(source_data).items()
+    }
 
 
 def retain_device_telemetry(

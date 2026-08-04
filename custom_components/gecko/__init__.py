@@ -185,6 +185,10 @@ async def _setup_vessels_and_gecko_clients(hass: HomeAssistant, entry: ConfigEnt
         vessel_name = vessel.get("name", f"Vessel {i}")
         
         try:
+            coordinator.update_device_telemetry(
+                vessel,
+                source_name="Gecko vessel API",
+            )
             _setup_vessel_device(entry, vessel, device_registry)
             await _setup_vessel_gecko_client(vessel, api_client, coordinator)
         except Exception as e:
@@ -230,6 +234,10 @@ async def _setup_vessel_gecko_client(vessel: dict, api_client: OAuthGeckoApi, co
     
     try:
         livestream_data = await api_client.async_get_monitor_livestream(monitor_id)
+        coordinator.update_device_telemetry(
+            livestream_data,
+            source_name="Gecko livestream API",
+        )
         websocket_url = livestream_data.get("brokerUrl")
         
         if not websocket_url:
