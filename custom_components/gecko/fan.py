@@ -44,7 +44,7 @@ async def async_setup_entry(
     if not runtime_data or not runtime_data.coordinators:
         _LOGGER.error("No coordinators found in runtime_data for config entry %s", config_entry.entry_id)
         return
-    created_entity_ids = set()
+    created_entity_ids: set[tuple[str, str]] = set()
     def create_discovery_callback(coordinator: GeckoVesselCoordinator):
         def discover_new_fan_entities():
             new_entities = []
@@ -52,7 +52,12 @@ async def async_setup_entry(
             pump_zones = vessel_coordinator.get_zones_by_type(ZoneType.FLOW_ZONE)
             flow_zones = [zone for zone in pump_zones if isinstance(zone, FlowZone)]
             for zone in flow_zones:
-                entity_id = f"{vessel_coordinator.vessel_name}_pump_{zone.id}".lower()
+                # Names can collide (or be renamed); discovery identity must use
+                # the same stable vessel and zone identifiers as unique_id.
+                entity_id = (
+                    str(vessel_coordinator.vessel_id),
+                    str(zone.id),
+                )
                 if entity_id not in created_entity_ids:
                     entity = GeckoFan(vessel_coordinator, config_entry, zone)
                     new_entities.append(entity)
