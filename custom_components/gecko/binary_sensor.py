@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
     BinarySensorDeviceClass,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import device_registry as dr
@@ -89,9 +91,6 @@ async def async_setup_entry(
         new_entities: list[BinarySensorEntity] = []
         for zone in coordinator.get_zones_by_type(ZoneType.TEMPERATURE_CONTROL_ZONE):
             zone_id = str(zone.id)
-            if zone_id in added_eco_zone_ids[vessel_key]:
-                continue
-
             if not isinstance(zone, TemperatureControlZone):
                 continue
 

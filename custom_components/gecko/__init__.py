@@ -77,8 +77,11 @@ def _migrate_entity_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
             continue
 
         # Build mapping of old unique_id prefix → new unique_id prefix
-        old_prefix = f"{entry.entry_id}_{vessel_name}"
-        new_prefix = f"{entry.entry_id}_{vessel_id}"
+        # Include the separator after the vessel component. Without it, a
+        # vessel named ``Spa`` also matches unique IDs belonging to ``Spa 2``
+        # (or any other name beginning with the same text).
+        old_prefix = f"{entry.entry_id}_{vessel_name}_"
+        new_prefix = f"{entry.entry_id}_{vessel_id}_"
 
         if old_prefix == new_prefix:
             continue
