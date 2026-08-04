@@ -98,7 +98,7 @@ def get_flow_speed_step_values(zone: Any) -> tuple[float, ...]:
     return tuple(values)
 
 
-def _uses_binary_near_max_speed_encoding(zone: Any) -> bool:
+def _reports_binary_near_max_speed_encoding(zone: Any) -> bool:
     """Return True when Gecko reports low/high as 99/100 style values."""
     if get_flow_speed_step_values(zone):
         return False
@@ -131,7 +131,7 @@ def get_supported_flow_speed_modes(zone: Any) -> tuple[str, ...]:
                 ordered_modes.append(mode)
         return tuple(ordered_modes)
 
-    if _uses_binary_near_max_speed_encoding(zone):
+    if _reports_binary_near_max_speed_encoding(zone):
         return ("low", "high")
 
     return FLOW_SPEED_MODE_OPTIONS[1:]
@@ -152,9 +152,11 @@ def get_flow_speed_value_for_mode(zone: Any, mode: str) -> float | int | None:
         if matching_values:
             return matching_values[len(matching_values) // 2]
 
-    if _uses_binary_near_max_speed_encoding(zone):
+    if _reports_binary_near_max_speed_encoding(zone):
+        # The 99/100 values are a readback encoding for the two physical
+        # states, not the percentages accepted by FlowZone.set_speed().
         return {
-            "low": 99,
+            "low": 50,
             "high": 100,
         }.get(mode)
 
@@ -368,7 +370,7 @@ def derive_flow_speed_mode(zone: Any) -> str | None:
         )
         return _get_mode_label_for_step_index(nearest_step_index, len(step_values))
 
-    if _uses_binary_near_max_speed_encoding(zone):
+    if _reports_binary_near_max_speed_encoding(zone):
         return "high" if speed >= 99.5 else "low"
 
     # Some spas report discrete preset indexes instead of percentages.

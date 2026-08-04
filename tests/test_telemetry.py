@@ -69,6 +69,51 @@ def _load_telemetry_module():
 telemetry = _load_telemetry_module()
 
 
+class FlowSpeedTests(unittest.TestCase):
+    """Verify two-speed readback values are not reused as commands."""
+
+    def setUp(self) -> None:
+        self.zone = SimpleNamespace(active=True, speed=99, speed_config=None)
+
+    def test_binary_readback_exposes_low_and_high_modes(self) -> None:
+        self.assertEqual(
+            telemetry.get_supported_flow_speed_modes(self.zone),
+            ("low", "high"),
+        )
+        self.assertEqual(telemetry.derive_flow_speed_mode(self.zone), "low")
+
+        self.zone.speed = 100
+        self.assertEqual(telemetry.derive_flow_speed_mode(self.zone), "high")
+
+    def test_binary_readback_uses_percentages_for_commands(self) -> None:
+        self.assertEqual(
+            telemetry.get_flow_speed_value_for_mode(self.zone, "low"),
+            50,
+        )
+        self.assertEqual(
+            telemetry.get_flow_speed_value_for_mode(self.zone, "high"),
+            100,
+        )
+
+    def test_percentage_boundary_selects_expected_command(self) -> None:
+        for percentage, expected_mode, expected_value in (
+            (1, "low", 50),
+            (50, "low", 50),
+            (51, "high", 100),
+            (100, "high", 100),
+        ):
+            with self.subTest(percentage=percentage):
+                mode = telemetry.get_flow_speed_mode_for_percentage(
+                    self.zone,
+                    percentage,
+                )
+                self.assertEqual(mode, expected_mode)
+                self.assertEqual(
+                    telemetry.get_flow_speed_value_for_mode(self.zone, mode),
+                    expected_value,
+                )
+
+
 class FlowInitiatorTests(unittest.TestCase):
     """Verify automatic flow is distinct from manual pump demand."""
 
