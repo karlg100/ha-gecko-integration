@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -12,6 +13,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
@@ -136,8 +138,13 @@ async def async_setup_entry(
 
     for coordinator in runtime_data.coordinators:
         async_add_entities(
-            GeckoDeviceTelemetrySensor(coordinator, description)
-            for description in DEVICE_TELEMETRY_SENSOR_DESCRIPTIONS
+            [
+                *(
+                    GeckoDeviceTelemetrySensor(coordinator, description)
+                    for description in DEVICE_TELEMETRY_SENSOR_DESCRIPTIONS
+                ),
+                GeckoRawApiSensor(coordinator),
+            ]
         )
         discover_new_sensor_entities(coordinator)
         coordinator.register_zone_update_callback(
@@ -200,6 +207,52 @@ class GeckoDeviceTelemetrySensor(
         ):
             attributes["candidate_fields"] = candidate_paths
         return attributes
+
+
+class GeckoRawApiSensor(
+    GeckoEntityAvailabilityMixin,
+    CoordinatorEntity[GeckoVesselCoordinator],
+    SensorEntity,
+):
+    """Expose credential-redacted raw API payloads for opt-in debugging."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Raw API Data"
+    _attr_icon = "mdi:code-json"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator: GeckoVesselCoordinator) -> None:
+        """Initialize the raw API diagnostic sensor."""
+        super().__init__(coordinator)
+        self._attr_unique_id = (
+            f"{coordinator.entry_id}_{coordinator.vessel_id}_raw_api_data"
+        )
+        self._attr_suggested_object_id = slugify(
+            f"{coordinator.vessel_name}_raw_api_data"
+        )
+        self._attr_device_info = dr.DeviceInfo(
+            identifiers={(DOMAIN, str(coordinator.vessel_id))},
+        )
+        self._attr_available = False
+        self._update_from_coordinator()
+
+    def _update_from_coordinator(self) -> None:
+        """Update the diagnostic state from captured API payloads."""
+        self._attr_native_value = (
+            "captured" if self.coordinator.get_raw_api_payloads() else "empty"
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the latest redacted payload grouped by source."""
+        return {"payloads": self.coordinator.get_raw_api_payloads()}
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle newly captured API data."""
+        self._update_from_coordinator()
+        self.async_write_ha_state()
 
 
 class GeckoTemperatureStatusSensor(

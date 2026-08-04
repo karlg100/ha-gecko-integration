@@ -159,6 +159,7 @@ The integration creates multiple entity types for comprehensive spa control:
 - `sensor.spa_name_home_en_serial_number` - Home (EN) serial number
 - `sensor.spa_name_spa_co_firmware_version` - Spa (CO) firmware version
 - `sensor.spa_name_spa_co_serial_number` - Spa (CO) serial number
+- `sensor.spa_name_raw_api_data` - credential-redacted raw API payloads for debugging (disabled by default)
 - `sensor.spa_name_status` - Operational status
 
 **Binary Sensors:**

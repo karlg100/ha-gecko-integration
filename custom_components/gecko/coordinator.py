@@ -21,6 +21,7 @@ from .telemetry import (
     get_device_metadata_candidate_paths,
     get_device_telemetry,
     get_device_telemetry_sources,
+    redact_raw_api_payload,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             key: None for key in DEVICE_TELEMETRY_KEYS
         }
         self._device_metadata_candidate_paths: set[str] = set()
+        self._raw_api_payloads: dict[str, Any] = {}
         
         # Track if this vessel has received initial zone data
         self._has_initial_zones = False
@@ -366,6 +368,7 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         source_name: str = "API payload",
     ) -> None:
         """Retain device telemetry found in state or configuration data."""
+        self._raw_api_payloads[source_name] = redact_raw_api_payload(source_data)
         extracted = get_device_telemetry(source_data)
         source_paths = get_device_telemetry_sources(source_data)
         self._device_metadata_candidate_paths.update(
@@ -405,6 +408,10 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return raw metadata-like API field paths seen for this vessel."""
         return tuple(sorted(self._device_metadata_candidate_paths))
 
+    def get_raw_api_payloads(self) -> dict[str, Any]:
+        """Return the latest credential-redacted payload from each API source."""
+        return redact_raw_api_payload(self._raw_api_payloads)
+
     async def async_shutdown(self) -> None:
         """Shutdown coordinator and cleanup resources."""
         _LOGGER.debug("Shutting down coordinator for vessel %s (entry %s)", self.vessel_name, self.entry_id)
@@ -422,4 +429,5 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._device_telemetry.clear()
         self._device_telemetry_sources.clear()
         self._device_metadata_candidate_paths.clear()
+        self._raw_api_payloads.clear()
         self._zone_update_callbacks.clear()

@@ -47,6 +47,9 @@
       "spa_serial_number": {
         "name": "Spa (CO) Serial Number"
       },
+      "raw_api_data": {
+        "name": "Raw API Data"
+      },
       "gateway_status": {
         "name": "Gateway Status"
       },

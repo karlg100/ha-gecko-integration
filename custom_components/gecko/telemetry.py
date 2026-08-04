@@ -49,10 +49,49 @@ DEVICE_TELEMETRY_KEYS: tuple[str, ...] = (
     "spa_serial_number",
 )
 
+RAW_API_REDACTED = "<redacted>"
+_RAW_API_SENSITIVE_KEYS = {
+    "authorization",
+    "brokerurl",
+    "clientsecret",
+    "cookie",
+    "privatekey",
+}
+_RAW_API_SENSITIVE_KEY_PARTS = (
+    "apikey",
+    "credential",
+    "password",
+    "secret",
+    "token",
+)
+
 
 def _normalized_key(value: Any) -> str:
     """Normalize a shadow key so naming-style changes do not break telemetry."""
     return "".join(character for character in str(value).lower() if character.isalnum())
+
+
+def redact_raw_api_payload(value: Any) -> Any:
+    """Return a JSON-safe copy of a raw payload with credentials redacted."""
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, child in value.items():
+            normalized_key = _normalized_key(key)
+            if normalized_key in _RAW_API_SENSITIVE_KEYS or any(
+                part in normalized_key for part in _RAW_API_SENSITIVE_KEY_PARTS
+            ):
+                redacted[str(key)] = RAW_API_REDACTED
+            else:
+                redacted[str(key)] = redact_raw_api_payload(child)
+        return redacted
+
+    if isinstance(value, (list, tuple)):
+        return [redact_raw_api_payload(child) for child in value]
+
+    if value is None or isinstance(value, (bool, float, int, str)):
+        return value
+
+    return str(value)
 
 
 def _walk_mappings(value: Any, path: tuple[str, ...] = ()):

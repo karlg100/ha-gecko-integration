@@ -255,6 +255,29 @@ class TestDeviceTelemetry(unittest.TestCase):
             ),
         )
 
+    def test_redacts_credentials_from_raw_api_payload(self):
+        source = {
+            "brokerUrl": "wss://example.invalid?token=secret",
+            "nested": {
+                "accessToken": "secret-token",
+                "serialNumber": "EN-1234",
+                "values": [{"password": "secret"}, 22],
+            },
+        }
+
+        redacted = telemetry.redact_raw_api_payload(source)
+
+        self.assertEqual(redacted["brokerUrl"], telemetry.RAW_API_REDACTED)
+        self.assertEqual(
+            redacted["nested"]["accessToken"], telemetry.RAW_API_REDACTED
+        )
+        self.assertEqual(redacted["nested"]["serialNumber"], "EN-1234")
+        self.assertEqual(
+            redacted["nested"]["values"][0]["password"],
+            telemetry.RAW_API_REDACTED,
+        )
+        self.assertEqual(source["nested"]["accessToken"], "secret-token")
+
 
 class FlowSpeedTests(unittest.TestCase):
     """Verify two-speed readback values are not reused as commands."""
