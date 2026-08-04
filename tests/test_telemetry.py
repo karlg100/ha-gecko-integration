@@ -236,6 +236,52 @@ class TestDeviceTelemetry(unittest.TestCase):
         self.assertEqual(extracted["spa_serial_number"], "CO-5678")
         self.assertEqual(sources["home_serial_number"], "monitorId")
 
+    def test_maps_only_mqtt_configuration_vessel_id_to_spa_serial(self):
+        mqtt_configuration = {
+            "metadata": {
+                "configurationId": "V_0431_003-LL_001-A_000_V01",
+                "oemId": "0",
+            },
+            "accessories": {"pumps": {"1": {"type": 1}}},
+            "zones": {"flow": {"1": {"pumps": ["1"]}}},
+            "vesselId": "252792551",
+        }
+        rest_vessel = {
+            "monitorId": "253230887",
+            "vesselId": 27387,
+            "name": "Stargazer's Spa",
+        }
+
+        mqtt_values = telemetry.get_device_telemetry(mqtt_configuration)
+        mqtt_sources = telemetry.get_device_telemetry_sources(mqtt_configuration)
+        rest_values = telemetry.get_device_telemetry(rest_vessel)
+
+        self.assertEqual(mqtt_values["spa_serial_number"], "252792551")
+        self.assertEqual(mqtt_sources["spa_serial_number"], "vesselId")
+        self.assertIsNone(rest_values["spa_serial_number"])
+
+    def test_observed_rf_fields_do_not_make_shadow_version_firmware(self):
+        shadow = {
+            "state": {
+                "reported": {
+                    "features": {"rf": {"channel": 22, "strength_": 3}},
+                    "shVersion_": "1.0.0",
+                }
+            }
+        }
+
+        extracted = telemetry.get_device_telemetry(shadow)
+        sources = telemetry.get_device_telemetry_sources(shadow)
+
+        self.assertEqual(extracted["rf_signal_strength"], 3)
+        self.assertEqual(extracted["rf_channel"], 22)
+        self.assertIsNone(extracted["home_firmware_version"])
+        self.assertIsNone(extracted["spa_firmware_version"])
+        self.assertEqual(
+            sources["rf_signal_strength"],
+            "state.reported.features.rf.strength_",
+        )
+
     def test_reports_metadata_candidate_paths_without_values(self):
         source = {
             "monitorId": "private-monitor-id",
