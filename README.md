@@ -196,6 +196,12 @@ The integration creates multiple entity types for comprehensive spa control:
 - Verify gateway connectivity in the Gecko app
 - Restart the integration: **Settings** → **Devices & Services** → **Gecko** → **⋮** → **Reload**
 
+**Home Assistant restarts or crashes while Gecko connects:**
+- Gecko 2.1.2 and newer require a matched AWS IoT runtime for Python 3.14
+- Update Gecko through HACS, then perform a full Home Assistant restart
+- If the first start reports mixed AWS CRT modules, restart Home Assistant once more; do not use integration reload
+- If Core cannot remain running, start Home Assistant in Safe Mode, update Gecko, and then restart normally
+
 ---
 
 ## 💬 Support & Community
