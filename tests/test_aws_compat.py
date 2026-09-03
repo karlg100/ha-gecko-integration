@@ -57,7 +57,7 @@ class AwsCompatibilityTests(unittest.TestCase):
 
         self.assertIsNone(problem)
 
-    def test_partially_upgraded_runtime_requires_full_restart(self) -> None:
+    def test_partially_upgraded_runtime_requires_full_restart_on_arm64(self) -> None:
         problem = aws_compat.runtime_compatibility_error(
             installed_version="0.36.1",
             python_version=(3, 14, 0),
@@ -67,6 +67,36 @@ class AwsCompatibilityTests(unittest.TestCase):
 
         self.assertIn("full Home Assistant restart", problem)
 
+    def test_legacy_runtime_remains_usable_before_python_314(self) -> None:
+        problem = aws_compat.runtime_compatibility_error(
+            installed_version="0.32.1",
+            python_version=(3, 13, 9),
+            machine="aarch64",
+            tls_context_type=_LegacyTlsContext,
+        )
+
+        self.assertIsNone(problem)
+
+    def test_legacy_runtime_remains_usable_on_x86_64(self) -> None:
+        problem = aws_compat.runtime_compatibility_error(
+            installed_version="0.32.1",
+            python_version=(3, 14, 0),
+            machine="x86_64",
+            tls_context_type=_LegacyTlsContext,
+        )
+
+        self.assertIsNone(problem)
+
+    def test_arm64_alias_is_guarded(self) -> None:
+        problem = aws_compat.runtime_compatibility_error(
+            installed_version="0.32.1",
+            python_version=(3, 14, 0),
+            machine="arm64",
+            tls_context_type=_LegacyTlsContext,
+        )
+
+        self.assertIn("unsafe", problem)
+
     def test_manifest_pins_a_matched_aws_runtime(self) -> None:
         manifest = json.loads(
             (ROOT / "custom_components" / "gecko" / "manifest.json").read_text(
@@ -74,7 +104,7 @@ class AwsCompatibilityTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(manifest["version"], "2.1.2")
+        self.assertEqual(manifest["version"], "2.1.3")
         self.assertIn("awscrt==0.36.1", manifest["requirements"])
         self.assertIn("awsiotsdk==1.31.0", manifest["requirements"])
 

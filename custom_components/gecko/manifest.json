@@ -16,5 +16,5 @@
     "awsiotsdk==1.31.0",
     "gecko-iot-client==1.0.3"
   ],
-  "version": "2.1.2"
+  "version": "2.1.3"
 }

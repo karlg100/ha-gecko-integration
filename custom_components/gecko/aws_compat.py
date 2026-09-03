@@ -15,6 +15,8 @@ from typing import Any
 
 MINIMUM_AWSCRT_VERSION = (0, 36, 1)
 REQUIRED_AWSCRT_VERSION = "0.36.1"
+UNSAFE_PYTHON_VERSION = (3, 14)
+ARM64_MACHINES = frozenset({"aarch64", "arm64"})
 
 
 class AwsCrtCompatibilityError(OSError):
@@ -37,6 +39,16 @@ def runtime_compatibility_error(
     tls_context_type: type[Any],
 ) -> str | None:
     """Describe an unsafe AWS CRT runtime, or return ``None`` when usable."""
+    # The native crash this guard protects against is specific to Python 3.14+
+    # on ARM64. Older CRT releases were the integration's working runtime on
+    # other platforms, so do not turn a platform-specific safety check into a
+    # global startup requirement.
+    if (
+        python_version[:2] < UNSAFE_PYTHON_VERSION
+        or machine.casefold() not in ARM64_MACHINES
+    ):
+        return None
+
     if _version_tuple(installed_version) < MINIMUM_AWSCRT_VERSION:
         environment = f"Python {python_version[0]}.{python_version[1]} on {machine}"
         return (
@@ -46,9 +58,10 @@ def runtime_compatibility_error(
         )
 
     # awscrt 0.36.x added this slot together with the IoT metrics path used by
-    # awsiotsdk 1.31.x.  Its absence while package metadata reports a newer
+    # awsiotsdk 1.31.x. Its absence while package metadata reports a newer
     # version means modules from different installations are resident in the
-    # same Python process.  This can happen on the first dependency upgrade.
+    # same Python process. Only reject that state where entering the native
+    # client is known to be unsafe.
     if not hasattr(tls_context_type, "_certificate_source"):
         return (
             "The loaded AWS CRT modules do not match the installed package. "
