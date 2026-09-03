@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 # Import from geckoIotClient
 from gecko_iot_client.models.zone_types import ZoneType, AbstractZone
 
+from .aws_compat import AwsCrtCompatibilityError
 from .const import DOMAIN
 from .connection_manager import async_get_connection_manager, GeckoMonitorConnection
 
@@ -311,6 +312,10 @@ class GeckoVesselCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             
             return True
             
+        except AwsCrtCompatibilityError:
+            # Preserve the actionable compatibility failure so setup can defer
+            # safely instead of replacing it with a generic ConnectionError.
+            raise
         except Exception as e:
             _LOGGER.error("Failed to set up connection for vessel %s: %s", self.vessel_name, e, exc_info=True)
             return False

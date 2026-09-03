@@ -5,19 +5,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
-from homeassistant.core import HomeAssistant, Event
+from gecko_iot_client import GeckoIotClient
+from gecko_iot_client.models.events import EventChannel
+from gecko_iot_client.transporters.mqtt import MqttTransporter
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers.singleton import singleton
 from homeassistant.util.hass_dict import HassKey
 
-from gecko_iot_client.models.events import EventChannel
-from gecko_iot_client import GeckoIotClient
-from gecko_iot_client.transporters.mqtt import MqttTransporter
-
-from .const import DOMAIN, CONFIG_TIMEOUT
+from .aws_compat import ensure_aws_crt_compatible
+from .const import CONFIG_TIMEOUT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -118,6 +119,11 @@ class GeckoConnectionManager:
             # Create new connection
             
             try:
+                # awscrt is a native extension.  Validate the loaded package
+                # before entering MQTT client construction so an old Python
+                # 3.14/aarch64 wheel cannot terminate Home Assistant.
+                ensure_aws_crt_compatible()
+
                 # Create transporter and client 
                 transporter = MqttTransporter(
                     broker_url=websocket_url, 
@@ -234,6 +240,8 @@ class GeckoConnectionManager:
                 
                 # Brief delay before reconnecting
                 await asyncio.sleep(RECONNECT_DELAY)
+
+                ensure_aws_crt_compatible()
                 
                 # Create new transporter and client with fresh URL
                 transporter = MqttTransporter(
@@ -316,6 +324,8 @@ class GeckoConnectionManager:
                 
                 if new_url != connection.websocket_url:
                     connection.websocket_url = new_url
+
+                ensure_aws_crt_compatible()
 
                 # Re-instantiate transporter and gecko client with new token
                 transporter = MqttTransporter(
